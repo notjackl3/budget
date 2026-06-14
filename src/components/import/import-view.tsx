@@ -28,7 +28,7 @@ import { dollarsToCents } from "@/lib/money";
 import { ymdToDate } from "@/lib/dates";
 import { NEED_WANT, INCOME_TYPES } from "@/lib/categories";
 import { commitImport } from "@/app/actions";
-import type { CategoryDTO, PaymentMethodDTO } from "@/lib/types";
+import type { CategoryDTO } from "@/lib/types";
 import type { PreviewStatement, PreviewRow } from "@/app/api/import/route";
 
 interface EditableRow extends PreviewRow {
@@ -36,23 +36,12 @@ interface EditableRow extends PreviewRow {
 }
 interface EditableStatement extends Omit<PreviewStatement, "rows"> {
   rows: EditableRow[];
-  paymentMethodId: string;
 }
 
-export function ImportView({
-  categories,
-  paymentMethods,
-}: {
-  categories: CategoryDTO[];
-  paymentMethods: PaymentMethodDTO[];
-}) {
+export function ImportView({ categories }: { categories: CategoryDTO[] }) {
   const router = useRouter();
   const { toast } = useToast();
   const money = useMoney();
-  const defaultPm =
-    paymentMethods.find((p) => /credit/i.test(p.name))?.id ??
-    paymentMethods[0]?.id ??
-    "none";
 
   const [uploading, setUploading] = React.useState(false);
   const [committing, setCommitting] = React.useState(false);
@@ -72,7 +61,6 @@ export function ImportView({
       const editable: EditableStatement[] = (json.statements as PreviewStatement[]).map(
         (s) => ({
           ...s,
-          paymentMethodId: defaultPm,
           rows: s.rows.map((r) => ({ ...r, include: !r.isDuplicate })),
         }),
       );
@@ -88,13 +76,6 @@ export function ImportView({
     setStatements((prev) => {
       const next = structuredClone(prev);
       next[si].rows[ri] = { ...next[si].rows[ri], ...patch };
-      return next;
-    });
-  }
-  function setStatementPm(si: number, pm: string) {
-    setStatements((prev) => {
-      const next = structuredClone(prev);
-      next[si].paymentMethodId = pm;
       return next;
     });
   }
@@ -136,7 +117,6 @@ export function ImportView({
             description: r.description,
             amount: r.amount,
             categoryId: r.categoryId,
-            paymentMethodId: s.paymentMethodId === "none" ? null : s.paymentMethodId,
             needWant: r.needWant,
             incomeType: r.incomeType,
           }));
@@ -211,7 +191,7 @@ export function ImportView({
       {statements.length > 0 && (
         <>
           {/* Summary + commit bar */}
-          <div className="sticky top-14 z-20 flex flex-wrap items-center gap-3 rounded-xl border bg-card/95 px-4 py-3 shadow-sm backdrop-blur">
+          <div className="glass-strong sticky top-14 z-20 flex flex-wrap items-center gap-3 rounded-2xl px-4 py-3">
             <div className="flex flex-wrap gap-x-5 gap-y-1 text-sm">
               <span className="text-muted-foreground">
                 {totals.rows} parsed
@@ -257,25 +237,6 @@ export function ImportView({
                           : s.filename}{" "}
                         · {s.rows.length} transactions
                       </p>
-                    </div>
-                    <div className="ml-auto flex items-center gap-2">
-                      <span className="text-xs text-muted-foreground">Paid with</span>
-                      <Select
-                        value={s.paymentMethodId}
-                        onValueChange={(v) => setStatementPm(si, v)}
-                      >
-                        <SelectTrigger className="h-8 w-36">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="none">—</SelectItem>
-                          {paymentMethods.map((p) => (
-                            <SelectItem key={p.id} value={p.id}>
-                              {p.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
                     </div>
                   </div>
 
@@ -338,12 +299,9 @@ export function ImportView({
                                 }
                               >
                                 <SelectTrigger className="h-8 w-[150px]">
-                                  <SelectValue placeholder="Uncategorized" />
+                                  <SelectValue placeholder="Select category" />
                                 </SelectTrigger>
                                 <SelectContent>
-                                  <SelectItem value="none">
-                                    Uncategorized
-                                  </SelectItem>
                                   {categories.map((c) => (
                                     <SelectItem key={c.id} value={c.id}>
                                       {c.name}

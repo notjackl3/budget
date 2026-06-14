@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { format } from "date-fns";
 import { ArrowUpDown, Check, CheckCheck, Search, X } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -26,7 +25,6 @@ import {
 import { useMoney, useCurrencySymbol } from "@/components/currency-provider";
 import { useToast } from "@/components/ui/toast";
 import { updateExpense, bulkReviewExpenses } from "@/app/actions";
-import { ymdToDate } from "@/lib/dates";
 import { NEED_WANT, INCOME_TYPES } from "@/lib/categories";
 import { centsToDecimalString, dollarsToCents } from "@/lib/money";
 import type { ExpenseDTO, CategoryDTO } from "@/lib/types";
@@ -59,6 +57,8 @@ export function ReviewView({
     needWant?: string;
     incomeType?: string;
     effectiveAmount?: string;
+    description?: string;
+    date?: string;
   };
   const [edits, setEdits] = React.useState<Record<string, Edit>>({});
 
@@ -75,6 +75,22 @@ export function ReviewView({
     const typed = edit.effectiveAmount.trim();
     if (typed === "" || dollarsToCents(typed) === e.amountCents) return "";
     return typed;
+  }
+
+  // Inline description/date edits, returned only when they actually differ
+  // (undefined = leave the stored value alone). An empty description is ignored
+  // so a row can't lose its label.
+  function pendingDescription(e: ExpenseDTO): string | undefined {
+    const d = edits[e.id]?.description;
+    if (d === undefined) return undefined;
+    const trimmed = d.trim();
+    if (trimmed === "" || trimmed === e.description) return undefined;
+    return trimmed;
+  }
+  function pendingDate(e: ExpenseDTO): string | undefined {
+    const d = edits[e.id]?.date;
+    if (d === undefined || d === "" || d === e.date) return undefined;
+    return d;
   }
 
   // Search / filter / sort state — scoped to the still-to-review rows.
@@ -111,7 +127,8 @@ export function ReviewView({
       const catId = edit.categoryId ?? e.categoryId ?? "none";
       const nw = edit.needWant ?? e.needWant ?? "none";
       if (q) {
-        const hay = `${e.description} ${e.categoryName ?? ""} ${e.notes ?? ""}`.toLowerCase();
+        const desc = edit.description ?? e.description;
+        const hay = `${desc} ${e.categoryName ?? ""} ${e.notes ?? ""}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       if (catFilter !== "all" && catId !== catFilter) return false;
@@ -145,6 +162,8 @@ export function ReviewView({
   async function markReviewed(e: ExpenseDTO) {
     const edit = edits[e.id] ?? {};
     const effectiveAmount = pendingEffective(e);
+    const description = pendingDescription(e);
+    const date = pendingDate(e);
     setRows((p) => p.filter((r) => r.id !== e.id));
     try {
       await updateExpense(e.id, {
@@ -155,6 +174,8 @@ export function ReviewView({
           ? { incomeType: edit.incomeType ?? e.incomeType }
           : { needWant: edit.needWant ?? e.needWant }),
         ...(effectiveAmount !== undefined ? { effectiveAmount } : {}),
+        ...(description !== undefined ? { description } : {}),
+        ...(date !== undefined ? { date } : {}),
       });
       router.refresh();
     } catch {
@@ -239,6 +260,8 @@ export function ReviewView({
       .map((e) => {
         const edit = edits[e.id] ?? {};
         const effectiveAmount = pendingEffective(e);
+        const description = pendingDescription(e);
+        const date = pendingDate(e);
         return {
           id: e.id,
           categoryId: edit.categoryId ?? e.categoryId,
@@ -247,6 +270,8 @@ export function ReviewView({
             ? { incomeType: edit.incomeType ?? e.incomeType }
             : {}),
           ...(effectiveAmount !== undefined ? { effectiveAmount } : {}),
+          ...(description !== undefined ? { description } : {}),
+          ...(date !== undefined ? { date } : {}),
         };
       });
     const removed = rows.filter((r) => ids.includes(r.id));
@@ -318,7 +343,6 @@ export function ReviewView({
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All categories</SelectItem>
-            <SelectItem value="none">Uncategorized</SelectItem>
             {categories.map((c) => (
               <SelectItem key={c.id} value={c.id}>
                 {c.name}
@@ -375,7 +399,7 @@ export function ReviewView({
 
       {/* Select-all + bulk actions */}
       {visible.length > 0 && (
-        <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-card px-3 py-2 text-sm">
+        <div className="glass flex flex-wrap items-center gap-3 rounded-xl px-3 py-2 text-sm">
           <label className="flex cursor-pointer items-center gap-2">
             <Checkbox
               checked={allVisibleSelected}
@@ -408,9 +432,6 @@ export function ReviewView({
                 >
                   <DropdownMenuLabel>Set category to</DropdownMenuLabel>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={() => bulkSetCategory("none")}>
-                    Uncategorized
-                  </DropdownMenuItem>
                   {categories.map((c) => (
                     <DropdownMenuItem
                       key={c.id}
@@ -466,7 +487,7 @@ export function ReviewView({
       )}
 
       {visible.length === 0 ? (
-        <div className="rounded-xl border border-dashed py-16 text-center text-sm text-muted-foreground">
+        <div className="glass-strong rounded-2xl py-16 text-center text-sm text-muted-foreground">
           No expenses match these filters.
         </div>
       ) : (
@@ -476,6 +497,8 @@ export function ReviewView({
           const catVal = edit.categoryId ?? e.categoryId ?? "none";
           const nwVal = edit.needWant ?? e.needWant ?? "none";
           const incomeVal = edit.incomeType ?? e.incomeType ?? "none";
+          const descVal = edit.description ?? e.description;
+          const dateVal = edit.date ?? e.date;
           return (
             <Card key={e.id}>
               <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center">
@@ -491,12 +514,29 @@ export function ReviewView({
                   onCheckedChange={() => toggleOne(e.id)}
                   aria-label={`Select ${e.description}`}
                 />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium">{e.description}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {format(ymdToDate(e.date), "EEE, MMM d")}
-                    {e.sourceStatementLabel ? ` · ${e.sourceStatementLabel}` : ""}
-                  </p>
+                <div className="min-w-0 flex-1 space-y-1.5">
+                  <Input
+                    value={descVal}
+                    onChange={(ev) =>
+                      setEdit(e.id, { description: ev.target.value })
+                    }
+                    className="h-8 font-medium"
+                    aria-label="Description"
+                  />
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="date"
+                      value={dateVal}
+                      onChange={(ev) => setEdit(e.id, { date: ev.target.value })}
+                      className="h-7 w-[9.5rem] text-xs text-muted-foreground"
+                      aria-label="Date"
+                    />
+                    {e.sourceStatementLabel && (
+                      <span className="truncate text-xs text-muted-foreground">
+                        {e.sourceStatementLabel}
+                      </span>
+                    )}
+                  </div>
                 </div>
                 {(() => {
                   const costValue =
@@ -535,10 +575,9 @@ export function ReviewView({
                   onValueChange={(v) => setEdit(e.id, { categoryId: v })}
                 >
                   <SelectTrigger className="sm:w-40">
-                    <SelectValue placeholder="Uncategorized" />
+                    <SelectValue placeholder="Select category" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="none">Uncategorized</SelectItem>
                     {categories.map((c) => (
                       <SelectItem key={c.id} value={c.id}>
                         {c.name}

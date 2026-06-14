@@ -3,6 +3,7 @@ import {
   parseYahooChart,
   parseFxRate,
   parseYahooSearch,
+  parseYahooHistory,
   type ParsedQuote,
   type SymbolMatch,
 } from "./investments";
@@ -17,10 +18,13 @@ const SEARCH_URL = "https://query1.finance.yahoo.com/v1/finance/search";
 const HEADERS = { "User-Agent": "Mozilla/5.0 (compatible; budget-tracker/1.0)" };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function fetchChart(symbol: string): Promise<any | null> {
+async function fetchChart(
+  symbol: string,
+  query = "range=1d&interval=1d",
+): Promise<any | null> {
   try {
     const res = await fetch(
-      `${CHART_URL}${encodeURIComponent(symbol)}?range=1d&interval=1d`,
+      `${CHART_URL}${encodeURIComponent(symbol)}?${query}`,
       { headers: HEADERS, cache: "no-store" },
     );
     if (!res.ok) return null;
@@ -64,6 +68,19 @@ export async function searchSymbols(query: string): Promise<SymbolMatch[]> {
   } catch {
     return [];
   }
+}
+
+/**
+ * Fetch a symbol's monthly closing prices over the past `years` (default 5),
+ * chronological order. Used to derive historical return/volatility for the
+ * projection. Returns null on any failure so the caller can skip the symbol.
+ */
+export async function fetchHistory(
+  symbol: string,
+  years = 5,
+): Promise<number[] | null> {
+  const json = await fetchChart(symbol, `range=${years}y&interval=1mo`);
+  return json ? parseYahooHistory(json) : null;
 }
 
 /** Fetch an FX rate (e.g. USD -> CAD). Returns null on failure, 1 when equal. */

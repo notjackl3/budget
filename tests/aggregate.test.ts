@@ -8,6 +8,10 @@ import {
   spendByMonthForYear,
   incomeByMonthForYear,
   cashflowByMonthForYear,
+  salaryByMonthForYear,
+  salaryForMonth,
+  addMonthSeries,
+  combineCashflow,
   type AggExpense,
 } from "@/lib/aggregate";
 
@@ -52,9 +56,9 @@ describe("categoryBreakdown", () => {
     expect(breakdown[0].count).toBe(2);
   });
 
-  it("buckets null category as Uncategorized", () => {
+  it("buckets null category under Miscellaneous", () => {
     const uncat = breakdown.find((b) => b.categoryId === null);
-    expect(uncat?.name).toBe("Uncategorized");
+    expect(uncat?.name).toBe("Miscellaneous");
     expect(uncat?.totalCents).toBe(1500);
   });
 });
@@ -90,14 +94,14 @@ describe("needWantSplit", () => {
         exp({ categorySlug: "eating-out", amountCents: 1200, needWant: "Want" }),
         // pricey meal: $15 Need floor + $10 Comfort excess
         exp({ categorySlug: "eating-out", amountCents: 2500, needWant: "Want" }),
-        // non-food rideshare Comfort counts in full
-        exp({ categorySlug: "comfort", amountCents: 1300, needWant: "Comfort" }),
+        // non-food Comfort (e.g. rideshare) counts in full
+        exp({ categorySlug: "transit", amountCents: 1300, needWant: "Comfort" }),
       ],
       1500,
     );
     expect(split.foodNeedCents).toBe(1200 + 1500);
     expect(split.foodComfortCents).toBe(1000);
-    // Need floor flows into needs; food excess + rideshare into comfort.
+    // Need floor flows into needs; food excess + the non-food Comfort into comfort.
     expect(split.needsCents).toBe(2700);
     expect(split.comfortCents).toBe(1000 + 1300);
     expect(split.wantsCents).toBe(0);
@@ -175,5 +179,70 @@ describe("cashflowByMonthForYear", () => {
     // A month with more spend than income nets negative.
     const may = series.find((s) => s.month === "2026-05");
     expect(may?.netCents).toBe(2000 - 9999);
+  });
+});
+
+describe("salaryByMonthForYear / salaryForMonth", () => {
+  // Salary (income) + a refund (income) + spending, all in 2026.
+  const rows: AggExpense[] = [
+    exp({ date: new Date("2026-06-10"), amountCents: -500000, incomeType: "Salary", needWant: null }),
+    exp({ date: new Date("2026-06-12"), amountCents: -3000, incomeType: "Refund", needWant: null }),
+    exp({ date: new Date("2026-04-10"), amountCents: -450000, incomeType: "Salary", needWant: null }),
+    exp({ date: new Date("2026-06-02"), amountCents: 4500, needWant: "Need" }),
+  ];
+  it("counts only Salary income, as positive magnitudes", () => {
+    expect(salaryForMonth(rows, "2026-06")).toBe(500000); // refund excluded
+    expect(salaryForMonth(rows, "2026-04")).toBe(450000);
+    expect(salaryForMonth(rows, "2026-05")).toBe(0);
+  });
+  it("fills a 12-month series with salary only", () => {
+    const series = salaryByMonthForYear(rows, 2026);
+    expect(series).toHaveLength(12);
+    expect(series.find((s) => s.month === "2026-06")?.totalCents).toBe(500000);
+    expect(series.find((s) => s.month === "2026-04")?.totalCents).toBe(450000);
+  });
+});
+
+describe("addMonthSeries", () => {
+  it("element-wise sums series keyed by the base months", () => {
+    const a = [
+      { month: "2026-01", totalCents: 100 },
+      { month: "2026-02", totalCents: 200 },
+    ];
+    const b = [
+      { month: "2026-01", totalCents: 50 },
+      { month: "2026-03", totalCents: 999 }, // ignored (not in base)
+    ];
+    expect(addMonthSeries(a, b)).toEqual([
+      { month: "2026-01", totalCents: 150 },
+      { month: "2026-02", totalCents: 200 },
+    ]);
+  });
+});
+
+describe("combineCashflow", () => {
+  it("zips income and spend keyed by the income months", () => {
+    const income = [{ month: "2026-06", totalCents: 500000 }];
+    const spend = [{ month: "2026-06", totalCents: 11000 }];
+    expect(combineCashflow(income, spend)).toEqual([
+      { month: "2026-06", incomeCents: 500000, spendCents: 11000, netCents: 489000 },
+    ]);
+  });
+});
+
+describe("voided expenses are excluded from spend", () => {
+  const rows: AggExpense[] = [
+    exp({ date: new Date("2026-06-02"), amountCents: 4500, needWant: "Need", categoryId: "groc", categoryName: "Groceries" }),
+    exp({ date: new Date("2026-06-03"), amountCents: 10000, needWant: "Want", voided: true, categoryId: "shop", categoryName: "Shopping" }),
+  ];
+  it("monthlySummary drops the voided row from total/count/category", () => {
+    const s = monthlySummary(rows, "2026-06");
+    expect(s.totalCents).toBe(4500);
+    expect(s.count).toBe(1);
+    expect(s.byCategory.some((c) => c.name === "Shopping")).toBe(false);
+  });
+  it("spendByMonthForYear excludes the voided row", () => {
+    const series = spendByMonthForYear(rows, 2026);
+    expect(series.find((m) => m.month === "2026-06")?.totalCents).toBe(4500);
   });
 });

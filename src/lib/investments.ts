@@ -217,3 +217,59 @@ export function portfolioTotals(vals: HoldingValuation[]): PortfolioTotals {
     unpricedCount,
   };
 }
+
+/**
+ * Parse the Yahoo chart payload (a multi-period range) into the series of
+ * closing prices, in chronological order. Prefers adjusted closes (which fold
+ * in dividends/splits, so the return reflects total return) and falls back to
+ * raw closes. Drops null gaps. Returns null if the shape is missing or empty.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function parseYahooHistory(json: any): number[] | null {
+  const result = json?.chart?.result?.[0];
+  if (!result) return null;
+  const adj = result.indicators?.adjclose?.[0]?.adjclose;
+  const raw = result.indicators?.quote?.[0]?.close;
+  const series = Array.isArray(adj) ? adj : Array.isArray(raw) ? raw : null;
+  if (!series) return null;
+  const closes = series.filter(
+    (c: unknown): c is number => typeof c === "number" && Number.isFinite(c) && c > 0,
+  );
+  return closes.length > 0 ? closes : null;
+}
+
+export interface ReturnStats {
+  annualReturn: number; // mean annualized return (e.g. 0.09 = 9%/yr)
+  annualVol: number; // annualized stdev of returns
+  months: number; // number of monthly return samples used
+}
+
+/**
+ * Derive return statistics from a series of monthly closing prices. Computes
+ * period-over-period simple returns, then their mean (μ) and sample standard
+ * deviation (σ), and annualizes both: annualReturn = (1+μ)^12 - 1,
+ * annualVol = σ * sqrt(12). Needs at least `minSamples` returns (default 12, a
+ * year of monthly data) to be meaningful; returns null otherwise.
+ */
+export function computeReturnStats(
+  closes: number[],
+  minSamples = 12,
+): ReturnStats | null {
+  if (!Array.isArray(closes) || closes.length < minSamples + 1) return null;
+  const rets: number[] = [];
+  for (let i = 1; i < closes.length; i++) {
+    if (closes[i - 1] > 0) rets.push(closes[i] / closes[i - 1] - 1);
+  }
+  if (rets.length < minSamples) return null;
+  const n = rets.length;
+  const mean = rets.reduce((a, r) => a + r, 0) / n;
+  // Sample variance (n-1) so a short series isn't overconfident.
+  const variance =
+    n > 1 ? rets.reduce((a, r) => a + (r - mean) ** 2, 0) / (n - 1) : 0;
+  const sd = Math.sqrt(variance);
+  return {
+    annualReturn: (1 + mean) ** 12 - 1,
+    annualVol: sd * Math.sqrt(12),
+    months: n,
+  };
+}

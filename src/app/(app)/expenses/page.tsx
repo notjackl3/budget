@@ -1,5 +1,5 @@
 import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
-import { getCategories, getPaymentMethods, getExpenses } from "@/lib/queries";
+import { getCategories, getExpenses } from "@/lib/queries";
 import { getQueryClient } from "@/lib/query-client";
 import { expensesQueryKey } from "@/lib/expenses-query";
 import { ExpensesView } from "@/components/expenses/expenses-view";
@@ -22,9 +22,8 @@ export default async function ExpensesPage({
 }) {
   const queryClient = getQueryClient();
 
-  const [categories, paymentMethods, { view }] = await Promise.all([
+  const [categories, { view }] = await Promise.all([
     getCategories(),
-    getPaymentMethods(),
     searchParams,
     // Prefetch expenses into the React Query cache on the server. Awaiting this
     // is what makes the route segment suspend, so loading.tsx streams a
@@ -48,14 +47,9 @@ export default async function ExpensesPage({
     color: c.color,
     sortOrder: c.sortOrder,
   }));
-  const methods = paymentMethods.map((p) => ({
-    id: p.id,
-    name: p.name,
-    sortOrder: p.sortOrder,
-  }));
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
+    <div className="mx-auto max-w-5xl space-y-6">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Expenses</h1>
         <p className="text-sm text-muted-foreground">
@@ -63,11 +57,7 @@ export default async function ExpensesPage({
         </p>
       </div>
       <HydrationBoundary state={dehydrate(queryClient)}>
-        <ExpensesView
-          categories={cats}
-          paymentMethods={methods}
-          initialPreset={initialPreset}
-        />
+        <ExpensesView categories={cats} initialPreset={initialPreset} />
       </HydrationBoundary>
     </div>
   );

@@ -8,9 +8,23 @@ import { TAG } from "./cache-tags";
 
 const expenseInclude = {
   category: { select: { name: true, color: true } },
-  paymentMethod: { select: { name: true } },
   sourceStatement: { select: { label: true } },
+  // For credit rows, the expense they offset (to show "Refund of …").
+  refunds: { select: { description: true } },
 } as const;
+
+/**
+ * Ids of spending rows offset by a refund/reimbursement, so they can be flagged
+ * `voided` (excluded from spend, greyed out in the table). A row is offset when
+ * another row's `refundsExpenseId` points at it.
+ */
+function offsetExpenseIds(
+  rows: { refundsExpenseId: string | null }[],
+): Set<string> {
+  const ids = new Set<string>();
+  for (const r of rows) if (r.refundsExpenseId) ids.add(r.refundsExpenseId);
+  return ids;
+}
 
 // All reads below go through Next's Data Cache via `unstable_cache`, keyed by a
 // stable name and tagged so mutations can invalidate precisely. A page
@@ -25,7 +39,8 @@ export const getExpenses = unstable_cache(
       orderBy: [{ date: "desc" }, { createdAt: "desc" }],
       include: expenseInclude,
     });
-    return rows.map(toExpenseDTO);
+    const offset = offsetExpenseIds(rows);
+    return rows.map((e) => toExpenseDTO(e, offset.has(e.id)));
   },
   ["expenses-list"],
   { tags: [TAG.expenses] },
@@ -39,7 +54,8 @@ export const getUnreviewedExpenses = unstable_cache(
       orderBy: [{ date: "desc" }],
       include: expenseInclude,
     });
-    return rows.map(toExpenseDTO);
+    const offset = offsetExpenseIds(rows);
+    return rows.map((e) => toExpenseDTO(e, offset.has(e.id)));
   },
   ["expenses-unreviewed"],
   { tags: [TAG.expenses] },
@@ -53,6 +69,7 @@ const getAggRows = unstable_cache(
     const rows = await prisma.expense.findMany({
       include: { category: { select: { name: true, color: true, slug: true } } },
     });
+    const offset = offsetExpenseIds(rows);
     return rows.map((e) => ({
       date: e.date.toISOString(),
       // Analytics use the effective cost (what it actually cost after any
@@ -61,6 +78,9 @@ const getAggRows = unstable_cache(
       amountCents: e.effectiveCents ?? e.amountCents,
       needWant: e.needWant,
       incomeType: e.incomeType,
+      // True when a refund/reimbursement cancels this spending row, so it's
+      // dropped from spend math.
+      voided: offset.has(e.id),
       categoryId: e.categoryId,
       categoryName: e.category?.name ?? null,
       categoryColor: e.category?.color ?? null,
@@ -87,16 +107,6 @@ export const getCategories = unstable_cache(
     }),
   ["categories-list"],
   { tags: [TAG.categories] },
-);
-
-export const getPaymentMethods = unstable_cache(
-  async () =>
-    prisma.paymentMethod.findMany({
-      where: { archived: false },
-      orderBy: { sortOrder: "asc" },
-    }),
-  ["payment-methods-list"],
-  { tags: [TAG.paymentMethods] },
 );
 
 // Settings is a singleton row read in the layout on every navigation; cache the
@@ -172,6 +182,42 @@ export const getPortfolioSnapshots = unstable_cache(
   async () => prisma.portfolioSnapshot.findMany({ orderBy: { date: "asc" } }),
   ["snapshots-list"],
   { tags: [TAG.snapshots] },
+);
+
+// --------------------------------------------------------------- Projection
+
+// The budget plan is a singleton (id = "singleton"), created on miss the same
+// way as Settings — never cache the create (a write), only the read.
+const getBudgetPlanCached = unstable_cache(
+  async () =>
+    prisma.budgetPlan.findUnique({
+      where: { id: "singleton" },
+      include: { buckets: true, allocations: true },
+    }),
+  ["budget-plan"],
+  { tags: [TAG.plan] },
+);
+
+export async function getBudgetPlan() {
+  const existing = await getBudgetPlanCached();
+  if (existing) return existing;
+  // Create on first use. upsert is idempotent, so a stale cached null can't
+  // cause a duplicate-create error; the follow-up read returns the full shape.
+  await prisma.budgetPlan.upsert({
+    where: { id: "singleton" },
+    create: { id: "singleton" },
+    update: {},
+  });
+  return prisma.budgetPlan.findUniqueOrThrow({
+    where: { id: "singleton" },
+    include: { buckets: true, allocations: true },
+  });
+}
+
+export const getReturnStats = unstable_cache(
+  async () => prisma.returnStat.findMany(),
+  ["return-stats-list"],
+  { tags: [TAG.returnStats] },
 );
 
 export { ymdToDate };

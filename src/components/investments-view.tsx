@@ -189,7 +189,12 @@ export function InvestmentsView({
           ) : (
             <div className="space-y-3">
               {holdings.map((h) => (
-                <HoldingRow key={h.id} holding={h} base={base} />
+                <HoldingRow
+                  key={h.id}
+                  holding={h}
+                  base={base}
+                  portfolioTotalCents={totals.marketValueCents}
+                />
               ))}
             </div>
           )}
@@ -203,9 +208,11 @@ export function InvestmentsView({
 function HoldingRow({
   holding: h,
   base,
+  portfolioTotalCents,
 }: {
   holding: HoldingRowDTO;
   base: string;
+  portfolioTotalCents: number;
 }) {
   const router = useRouter();
   const { toast } = useToast();
@@ -237,7 +244,7 @@ function HoldingRow({
   }
 
   return (
-    <div className="rounded-lg border bg-card p-3">
+    <div className="glass rounded-xl p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -256,6 +263,11 @@ function HoldingRow({
           <p className="tabular font-semibold">
             {h.marketValueBaseCents != null
               ? money(h.marketValueBaseCents)
+              : "—"}
+          </p>
+          <p className="text-xs tabular text-muted-foreground">
+            {h.marketValueBaseCents != null && portfolioTotalCents > 0
+              ? `${((h.marketValueBaseCents / portfolioTotalCents) * 100).toFixed(1)}% of portfolio`
               : "—"}
           </p>
           <p className={`text-xs tabular ${gainClass(h.gainBaseCents)}`}>

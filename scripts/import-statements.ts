@@ -43,10 +43,6 @@ async function main() {
   const miscId = slugToId.get("miscellaneous") ?? categories[0].id;
   const ruleMap = await getMerchantRuleMap();
 
-  const creditCard = await prisma.paymentMethod.findFirst({
-    where: { name: { contains: "Credit" } },
-  });
-
   // Dedupe only against pre-existing rows so re-runs are idempotent. We do NOT
   // dedupe within this run: two legitimately distinct same-day, same-merchant,
   // same-amount purchases share a fingerprint and must both be kept (the bank's
@@ -101,7 +97,6 @@ async function main() {
         date: ymdToDate(t.date),
         amountCents: t.amountCents,
         categoryId: resolved.categoryId,
-        paymentMethodId: creditCard?.id ?? null,
         needWant: resolved.needWant,
         incomeType: resolved.incomeType,
         recurring: false,

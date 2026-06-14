@@ -45,13 +45,13 @@
     --glass-blur: blur(16px) saturate(1.4);
     --glass-rim: rgba(255, 255, 255, 0.55); /* the translucent border itself */
     --glass-rim-hover: rgba(255, 255, 255, 0.85);
-    --glass-shadow: 0 1px 2px rgba(27, 24, 48, 0.04),
-      0 14px 34px rgba(27, 24, 48, 0.1),
+    --glass-shadow: 0 1px 2px rgba(27, 24, 48, 0.03),
+      0 6px 16px rgba(27, 24, 48, 0.05),
       inset 0 1px 0 rgba(255, 255, 255, 0.9),
       inset 0 0 0 1px rgba(255, 255, 255, 0.4),
       inset 0 -1px 0 rgba(27, 24, 48, 0.04);
-    --glass-shadow-violet: 0 1px 2px rgba(27, 24, 48, 0.04),
-      0 16px 38px rgba(109, 74, 255, 0.16),
+    --glass-shadow-violet: 0 1px 2px rgba(27, 24, 48, 0.03),
+      0 8px 20px rgba(109, 74, 255, 0.1),
       inset 0 1px 0 rgba(255, 255, 255, 0.85),
       inset 0 0 0 1px rgba(182, 156, 255, 0.5),
       inset 0 -1px 0 rgba(27, 24, 48, 0.03);
@@ -62,8 +62,8 @@
       rgba(255, 255, 255, 0.7),
       rgba(255, 255, 255, 0) 42%
     );
-    --glass-shadow-float: 0 2px 4px rgba(27, 24, 48, 0.05),
-      0 22px 48px rgba(27, 24, 48, 0.12),
+    --glass-shadow-float: 0 1px 2px rgba(27, 24, 48, 0.04),
+      0 10px 26px rgba(27, 24, 48, 0.07),
       inset 0 1px 0 rgba(255, 255, 255, 0.95),
       inset 0 0 0 1px rgba(255, 255, 255, 0.55),
       inset 0 -1px 0 rgba(27, 24, 48, 0.04);
@@ -121,12 +121,12 @@
     --glass-blur: blur(16px) saturate(1.2);
     --glass-rim: rgba(255, 255, 255, 0.1);
     --glass-rim-hover: rgba(255, 255, 255, 0.22);
-    --glass-shadow: 0 1px 2px rgba(0, 0, 0, 0.3),
-      0 16px 36px rgba(0, 0, 0, 0.42),
+    --glass-shadow: 0 1px 2px rgba(0, 0, 0, 0.22),
+      0 6px 16px rgba(0, 0, 0, 0.26),
       inset 0 1px 0 rgba(255, 255, 255, 0.08),
       inset 0 0 0 1px rgba(255, 255, 255, 0.04);
-    --glass-shadow-violet: 0 1px 2px rgba(0, 0, 0, 0.3),
-      0 18px 40px rgba(109, 74, 255, 0.28),
+    --glass-shadow-violet: 0 1px 2px rgba(0, 0, 0, 0.22),
+      0 8px 20px rgba(109, 74, 255, 0.18),
       inset 0 1px 0 rgba(255, 255, 255, 0.12),
       inset 0 0 0 1px rgba(157, 130, 255, 0.32);
     --glass-sheen: linear-gradient(
@@ -134,8 +134,8 @@
       rgba(255, 255, 255, 0.08),
       rgba(255, 255, 255, 0) 42%
     );
-    --glass-shadow-float: 0 2px 6px rgba(0, 0, 0, 0.32),
-      0 26px 52px rgba(0, 0, 0, 0.5),
+    --glass-shadow-float: 0 1px 3px rgba(0, 0, 0, 0.24),
+      0 10px 26px rgba(0, 0, 0, 0.32),
       inset 0 1px 0 rgba(255, 255, 255, 0.1),
       inset 0 0 0 1px rgba(255, 255, 255, 0.06);
     --refraction:
@@ -162,19 +162,16 @@
     background-image: var(--refraction);
     background-attachment: fixed;
   }
-  /* Right-aligned, tabular figures for scannable money columns — mono gives the
-     finance-terminal cadence and locks digit width. */
+  /* Tabular figures so money columns align — same family as everything else. */
   .tabular {
-    font-family: var(--font-mono), ui-monospace, monospace;
     font-variant-numeric: tabular-nums;
     font-feature-settings: "tnum";
-    letter-spacing: -0.01em;
   }
-  /* mono eyebrow / label — uppercase, tracked. */
+  /* Eyebrow / label — hierarchy from case + tracking, not a second font. */
   .eyebrow {
-    font-family: var(--font-mono), ui-monospace, monospace;
-    font-size: 0.625rem;
-    letter-spacing: 0.14em;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
     text-transform: uppercase;
   }
 }
@@ -196,14 +193,18 @@
     border: 1px solid var(--glass-rim);
     box-shadow: var(--glass-shadow-float);
   }
-  /* Floating menus / dialogs — frosted but near-opaque so text stays legible
-     over arbitrary content beneath. */
+  /* Floating menus / dialogs — clean and near-solid: a light backdrop blur and
+     a simple soft shadow, no glassy sheen/highlight (menus need crisp options,
+     not reflections). */
   .glass-pop {
-    background: hsl(var(--popover) / 0.86);
-    backdrop-filter: var(--glass-blur);
-    -webkit-backdrop-filter: var(--glass-blur);
-    border: 1px solid var(--glass-rim);
-    box-shadow: var(--glass-shadow-float);
+    background: hsl(var(--popover) / 0.98);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid hsl(var(--border));
+    box-shadow: 0 10px 30px rgba(27, 24, 48, 0.14);
+  }
+  .dark .glass-pop {
+    box-shadow: 0 12px 34px rgba(0, 0, 0, 0.5);
   }
   /* Active / primary glass — violet thread tints the rim + shadow. */
   .glass-active {

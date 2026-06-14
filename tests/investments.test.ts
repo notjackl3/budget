@@ -3,6 +3,8 @@ import {
   parseYahooChart,
   parseFxRate,
   parseYahooSearch,
+  parseYahooHistory,
+  computeReturnStats,
   guessCurrency,
   toBaseCents,
   valueHolding,
@@ -229,5 +231,58 @@ describe("portfolioTotals", () => {
     expect(t.marketValueCents).toBe(1000);
     expect(t.costCents).toBe(0);
     expect(t.gainPct).toBeNull();
+  });
+});
+
+describe("parseYahooHistory", () => {
+  it("prefers adjusted closes and drops null gaps", () => {
+    const json = {
+      chart: {
+        result: [
+          {
+            indicators: {
+              adjclose: [{ adjclose: [10, null, 12, 0, 13] }],
+              quote: [{ close: [99, 99, 99, 99, 99] }],
+            },
+          },
+        ],
+      },
+    };
+    expect(parseYahooHistory(json)).toEqual([10, 12, 13]);
+  });
+
+  it("falls back to raw closes when adjclose is absent", () => {
+    const json = {
+      chart: { result: [{ indicators: { quote: [{ close: [5, 6, 7] }] } }] },
+    };
+    expect(parseYahooHistory(json)).toEqual([5, 6, 7]);
+  });
+
+  it("returns null for a missing/empty shape", () => {
+    expect(parseYahooHistory({})).toBeNull();
+    expect(parseYahooHistory({ chart: { result: [{ indicators: {} }] } })).toBeNull();
+  });
+});
+
+describe("computeReturnStats", () => {
+  it("annualizes a steady monthly growth series with zero volatility", () => {
+    // 13 closes growing 1%/mo -> 12 identical monthly returns, σ = 0.
+    const closes = Array.from({ length: 13 }, (_, i) => 100 * 1.01 ** i);
+    const stats = computeReturnStats(closes)!;
+    expect(stats.months).toBe(12);
+    expect(stats.annualReturn).toBeCloseTo(1.01 ** 12 - 1, 8);
+    expect(stats.annualVol).toBeCloseTo(0, 8);
+  });
+
+  it("returns null when there is not enough history", () => {
+    expect(computeReturnStats([100, 101, 102])).toBeNull();
+    expect(computeReturnStats([])).toBeNull();
+  });
+
+  it("reports positive volatility for a fluctuating series", () => {
+    const closes = [100, 110, 99, 120, 105, 130, 110, 140, 120, 150, 130, 160, 140];
+    const stats = computeReturnStats(closes)!;
+    expect(stats.annualVol).toBeGreaterThan(0);
+    expect(stats.months).toBe(12);
   });
 });

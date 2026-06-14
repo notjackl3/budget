@@ -1,11 +1,10 @@
-import { getCategories, getPaymentMethods, getStatements } from "@/lib/queries";
+import { getCategories, getStatements } from "@/lib/queries";
 import { ImportView } from "@/components/import/import-view";
 import { formatDistanceToNow } from "date-fns";
 
 export default async function ImportPage() {
-  const [categories, paymentMethods, statements] = await Promise.all([
+  const [categories, statements] = await Promise.all([
     getCategories(),
-    getPaymentMethods(),
     getStatements(),
   ]);
 
@@ -15,11 +14,6 @@ export default async function ImportPage() {
     slug: c.slug,
     color: c.color,
     sortOrder: c.sortOrder,
-  }));
-  const methods = paymentMethods.map((p) => ({
-    id: p.id,
-    name: p.name,
-    sortOrder: p.sortOrder,
   }));
 
   return (
@@ -34,14 +28,14 @@ export default async function ImportPage() {
         </p>
       </div>
 
-      <ImportView categories={cats} paymentMethods={methods} />
+      <ImportView categories={cats} />
 
       {statements.length > 0 && (
         <div>
           <h2 className="mb-2 text-sm font-medium text-muted-foreground">
             Previously imported
           </h2>
-          <ul className="divide-y rounded-xl border">
+          <ul className="glass-strong divide-y divide-[var(--glass-rim)] overflow-hidden rounded-2xl">
             {statements.map((s) => (
               <li
                 key={s.id}

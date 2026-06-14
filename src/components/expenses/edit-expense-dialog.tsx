@@ -26,18 +26,16 @@ import { updateExpense } from "@/app/actions";
 import { expensesQueryKey } from "@/lib/expenses-query";
 import { NEED_WANT, INCOME_TYPES } from "@/lib/categories";
 import { centsToDecimalString, dollarsToCents } from "@/lib/money";
-import type { ExpenseDTO, CategoryDTO, PaymentMethodDTO } from "@/lib/types";
+import type { ExpenseDTO, CategoryDTO } from "@/lib/types";
 
 export function EditExpenseDialog({
   expense,
   categories,
-  paymentMethods,
   open,
   onOpenChange,
 }: {
   expense: ExpenseDTO;
   categories: CategoryDTO[];
-  paymentMethods: PaymentMethodDTO[];
   open: boolean;
   onOpenChange: (v: boolean) => void;
 }) {
@@ -59,9 +57,6 @@ export function EditExpenseDialog({
   const [categoryId, setCategoryId] = React.useState(
     expense.categoryId ?? "none",
   );
-  const [paymentMethodId, setPaymentMethodId] = React.useState(
-    expense.paymentMethodId ?? "none",
-  );
   const [needWant, setNeedWant] = React.useState(expense.needWant ?? "none");
   const [incomeType, setIncomeType] = React.useState(
     expense.incomeType ?? "none",
@@ -82,7 +77,6 @@ export function EditExpenseDialog({
         effectiveAmount,
         date,
         categoryId,
-        paymentMethodId,
         ...(isIncome ? { incomeType, needWant: null } : { needWant }),
         recurring,
         notes,
@@ -166,10 +160,9 @@ export function EditExpenseDialog({
               <Label>Category</Label>
               <Select value={categoryId} onValueChange={setCategoryId}>
                 <SelectTrigger>
-                  <SelectValue />
+                  <SelectValue placeholder="Select category" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="none">Uncategorized</SelectItem>
                   {categories.map((c) => (
                     <SelectItem key={c.id} value={c.id}>
                       {c.name}
@@ -179,24 +172,7 @@ export function EditExpenseDialog({
               </Select>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>Payment</Label>
-              <Select value={paymentMethodId} onValueChange={setPaymentMethodId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="—" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">—</SelectItem>
-                  {paymentMethods.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      {p.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
+          <div className="space-y-1.5">
               <Label>{isIncome ? "Income type" : "Need / Want"}</Label>
               {isIncome ? (
                 <Select value={incomeType} onValueChange={setIncomeType}>
@@ -227,7 +203,6 @@ export function EditExpenseDialog({
                   </SelectContent>
                 </Select>
               )}
-            </div>
           </div>
           <div className="space-y-1.5">
             <Label>Notes</Label>

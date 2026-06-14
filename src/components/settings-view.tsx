@@ -7,31 +7,26 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/components/ui/toast";
 import {
   updateSettings,
   createCategory,
   updateCategory,
   archiveCategory,
-  createPaymentMethod,
-  archivePaymentMethod,
 } from "@/app/actions";
 import { centsToDecimalString, dollarsToCents } from "@/lib/money";
-import type { CategoryDTO, PaymentMethodDTO } from "@/lib/types";
+import type { CategoryDTO } from "@/lib/types";
 
 export function SettingsView({
   currencyCode,
   currencySymbol,
   mealNeedCents,
   categories,
-  paymentMethods,
 }: {
   currencyCode: string;
   currencySymbol: string;
   mealNeedCents: number;
   categories: CategoryDTO[];
-  paymentMethods: PaymentMethodDTO[];
 }) {
   const router = useRouter();
   const { toast } = useToast();
@@ -43,7 +38,6 @@ export function SettingsView({
   );
   const [newCat, setNewCat] = React.useState("");
   const [newCatColor, setNewCatColor] = React.useState("#6366f1");
-  const [newPm, setNewPm] = React.useState("");
 
   async function saveCurrency() {
     await updateSettings({ currencyCode: code, currencySymbol: symbol });
@@ -67,14 +61,6 @@ export function SettingsView({
     setNewCat("");
     router.refresh();
     toast({ title: "Category added", variant: "success" });
-  }
-
-  async function addPm() {
-    if (!newPm.trim()) return;
-    await createPaymentMethod(newPm.trim());
-    setNewPm("");
-    router.refresh();
-    toast({ title: "Payment method added", variant: "success" });
   }
 
   return (
@@ -174,47 +160,6 @@ export function SettingsView({
         </CardContent>
       </Card>
 
-      {/* Payment methods */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Payment methods</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="flex flex-wrap gap-2">
-            {paymentMethods.map((p) => (
-              <Badge key={p.id} variant="outline" className="gap-1.5 py-1 pr-1">
-                {p.name}
-                <button
-                  className="rounded-full p-0.5 text-muted-foreground hover:bg-secondary hover:text-destructive"
-                  onClick={async () => {
-                    await archivePaymentMethod(p.id);
-                    router.refresh();
-                  }}
-                  aria-label={`Remove ${p.name}`}
-                >
-                  <Archive className="h-3 w-3" />
-                </button>
-              </Badge>
-            ))}
-          </div>
-          <div className="flex items-end gap-2 pt-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="newpm">New payment method</Label>
-              <Input
-                id="newpm"
-                value={newPm}
-                onChange={(e) => setNewPm(e.target.value)}
-                placeholder="e.g. Prepaid card"
-                className="w-48"
-                onKeyDown={(e) => e.key === "Enter" && addPm()}
-              />
-            </div>
-            <Button variant="outline" onClick={addPm}>
-              <Plus className="h-4 w-4" /> Add
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
     </div>
   );
 }

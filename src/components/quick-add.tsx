@@ -27,7 +27,7 @@ import { useToast } from "@/components/ui/toast";
 import { createExpense } from "@/app/actions";
 import { expensesQueryKey } from "@/lib/expenses-query";
 import { NEED_WANT } from "@/lib/categories";
-import type { CategoryDTO, PaymentMethodDTO } from "@/lib/types";
+import type { CategoryDTO } from "@/lib/types";
 
 function todayYMD() {
   const d = new Date();
@@ -36,11 +36,9 @@ function todayYMD() {
 
 export function QuickAdd({
   categories,
-  paymentMethods,
   trigger,
 }: {
   categories: CategoryDTO[];
-  paymentMethods: PaymentMethodDTO[];
   trigger?: React.ReactNode;
 }) {
   const router = useRouter();
@@ -52,8 +50,13 @@ export function QuickAdd({
   const [description, setDescription] = React.useState("");
   const [amount, setAmount] = React.useState("");
   const [date, setDate] = React.useState(todayYMD());
-  const [categoryId, setCategoryId] = React.useState<string>("none");
-  const [paymentMethodId, setPaymentMethodId] = React.useState<string>("none");
+  // Default to Miscellaneous so a quick entry always lands in a real category
+  // (the "Uncategorized" option was removed everywhere).
+  const miscCategoryId =
+    categories.find((c) => c.slug === "miscellaneous")?.id ??
+    categories[0]?.id ??
+    "none";
+  const [categoryId, setCategoryId] = React.useState<string>(miscCategoryId);
   const [needWant, setNeedWant] = React.useState<string>("none");
   const [recurring, setRecurring] = React.useState(false);
   const [notes, setNotes] = React.useState("");
@@ -64,7 +67,7 @@ export function QuickAdd({
     setAmount("");
     setNotes("");
     setRecurring(false);
-    // keep date, category, payment method, need/want for fast repeat entry
+    // keep date, category, need/want for fast repeat entry
     requestAnimationFrame(() => descRef.current?.focus());
   }
 
@@ -80,7 +83,6 @@ export function QuickAdd({
         amount,
         date,
         categoryId,
-        paymentMethodId,
         needWant,
         recurring,
         notes,
@@ -157,10 +159,9 @@ export function QuickAdd({
               <Label>Category</Label>
               <Select value={categoryId} onValueChange={setCategoryId}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Uncategorized" />
+                  <SelectValue placeholder="Select category" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="none">Uncategorized</SelectItem>
                   {categories.map((c) => (
                     <SelectItem key={c.id} value={c.id}>
                       {c.name}
@@ -180,42 +181,21 @@ export function QuickAdd({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>Payment</Label>
-              <Select
-                value={paymentMethodId}
-                onValueChange={setPaymentMethodId}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="—" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">—</SelectItem>
-                  {paymentMethods.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      {p.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Need / Want</Label>
-              <Select value={needWant} onValueChange={setNeedWant}>
-                <SelectTrigger>
-                  <SelectValue placeholder="—" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">—</SelectItem>
-                  {NEED_WANT.map((v) => (
-                    <SelectItem key={v} value={v}>
-                      {v}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+          <div className="space-y-1.5">
+            <Label>Need / Want</Label>
+            <Select value={needWant} onValueChange={setNeedWant}>
+              <SelectTrigger>
+                <SelectValue placeholder="—" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">—</SelectItem>
+                {NEED_WANT.map((v) => (
+                  <SelectItem key={v} value={v}>
+                    {v}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           <div className="space-y-1.5">

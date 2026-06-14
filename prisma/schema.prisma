@@ -31,18 +31,6 @@ model Category {
   updatedAt DateTime @updatedAt
 }
 
-// How an expense was paid. Editable in Settings.
-model PaymentMethod {
-  id        String    @id @default(cuid())
-  name      String    @unique
-  sortOrder Int       @default(0)
-  archived  Boolean   @default(false)
-  expenses  Expense[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
 // A single spending record. Amount is stored as integer cents to avoid float
 // rounding; month/week are derived from `date` at read time, never stored.
 model Expense {
@@ -57,8 +45,8 @@ model Expense {
   effectiveCents Int?
   // "Need" | "Want" | "Comfort" | null — only meaningful for spending (amount >= 0).
   needWant    String?
-  // "Refund" | "Salary" | null — only meaningful for incoming money
-  // (amountCents < 0). The expense/income kind itself is derived from the
+  // "Salary" | "Refund" | "Reimbursement" | null — only meaningful for incoming
+  // money (amountCents < 0). The expense/income kind itself is derived from the
   // amount sign, not stored.
   incomeType  String?
   notes       String?
@@ -67,8 +55,15 @@ model Expense {
 
   categoryId      String?
   category        Category?      @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  paymentMethodId String?
-  paymentMethod   PaymentMethod? @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
+
+  // Refund/reimbursement linking: a credit row (negative, incomeType
+  // Refund/Reimbursement) may point at the spending row it cancels out. The
+  // offset expense then stops counting toward spend analytics. Self-relation
+  // "ExpenseRefund": this row offsets `refunds`; `offsetBy` are the credits that
+  // cancel this expense. SetNull so deleting the offset expense just unlinks.
+  refundsExpenseId String?
+  refunds          Expense?  @relation("ExpenseRefund", fields: [refundsExpenseId], references: [id], onDelete: SetNull)
+  offsetBy         Expense[] @relation("ExpenseRefund")
 
   // Traceability: which uploaded statement this row came from (null = manual).
   sourceStatementId String?
@@ -87,6 +82,7 @@ model Expense {
   // The weekly review filters on `reviewed`; index it so that scan stays cheap
   // as the table grows.
   @@index([reviewed])
+  @@index([refundsExpenseId])
 }
 
 // An uploaded PDF statement. We keep the metadata for traceability even after
@@ -175,6 +171,11 @@ model Job {
   cadence      String  @default("monthly")
   // Hours/week, used only to annualize an hourly cadence.
   hoursPerWeek Float?
+  // When this job started earning. Used to place its income on the right months
+  // in the dashboard cash-flow trend. Null = treat as always-on (legacy rows).
+  startDate    DateTime?
+  // When it stopped earning, if it has. Null = still ongoing.
+  endDate      DateTime?
   // Whether this job currently earns (counts toward the income totals).
   active       Boolean @default(true)
   notes        String?
@@ -230,4 +231,63 @@ model PortfolioSnapshot {
   date       String   @unique // "YYYY-MM-DD"
   totalCents Int
   createdAt  DateTime @default(now())
+}
+
+// The forward-looking budget/investment plan (a singleton, id = "singleton").
+// Monthly income is treated as a fixed pot the user allocates across spending
+// categories and an "investment" bucket; the investment contribution is split
+// across tickers and projected forward using each holding's historical return.
+model BudgetPlan {
+  id           String @id @default("singleton")
+  // How many years the projection chart spans.
+  horizonYears Int    @default(10)
+  // Which scenario the chart highlights: "best" | "average" | "worst".
+  scenario     String @default("average")
+  // Manual override for the monthly contribution fed into the projection, cents.
+  // null = follow the Investment allocator bucket; a value decouples the
+  // projection from the slider so the user can model a different amount.
+  investContribCents Int?
+
+  buckets     BudgetBucket[]
+  allocations InvestmentAllocation[]
+
+  updatedAt DateTime @updatedAt
+}
+
+// One allocation bucket of the monthly income: either a spending category (key
+// = categoryId) or the investment contribution (key = "investment"). Locked
+// buckets are pinned and never move when the user rebalances another bucket.
+model BudgetBucket {
+  id     String @id @default(cuid())
+  planId String
+  plan   BudgetPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  // A category id, or the literal "investment" for the contribution bucket.
+  key         String
+  amountCents Int     @default(0)
+  locked      Boolean @default(false)
+
+  @@unique([planId, key])
+}
+
+// What share of the monthly investment contribution goes into each ticker.
+// `percent` is 0..100; the UI normalizes the set to total 100.
+model InvestmentAllocation {
+  id     String @id @default(cuid())
+  planId String
+  plan   BudgetPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  symbol  String
+  percent Float
+
+  @@unique([planId, symbol])
+}
+
+// Cached per-ticker historical return statistics, derived from multi-year
+// monthly closes (see lib/projection.ts). Refreshed on demand like PriceQuote
+// so page loads never block on the network.
+model ReturnStat {
+  symbol       String @id
+  annualReturn Float // mean annualized return, e.g. 0.09 = 9%/yr
+  annualVol    Float // annualized stdev of returns
+  months       Int // number of monthly return samples used
+  fetchedAt    DateTime @default(now())
 }

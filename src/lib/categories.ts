@@ -22,25 +22,13 @@ export const DEFAULT_CATEGORIES: SeedCategory[] = [
   // "Explore" merges the former Travel + Social categories (flights, hotels,
   // outings, entertainment) into one.
   { slug: "explore", name: "Explore", color: "#0d9488" },
-  { slug: "health", name: "Health", color: "#dc2626" },
   { slug: "work", name: "Work", color: "#0ea5e9" },
   { slug: "miscellaneous", name: "Miscellaneous", color: "#94a3b8" },
-  // A need bought in its premium/convenience form (e.g. an Uber ride instead of
-  // transit) — the "want version of a need". Paired with the "Comfort" need/want
-  // flag below.
-  { slug: "comfort", name: "Comfort", color: "#eab308" },
 ];
 
-export const DEFAULT_PAYMENT_METHODS = [
-  "Credit Card",
-  "Debit",
-  "Cash",
-  "e-Transfer",
-  "Other",
-];
-
-// "Comfort" = a need you spent extra on (the want-version of a need). Treated as
-// a first-class third classification alongside Need and Want everywhere.
+// "Comfort" = a need you spent extra on (the want-version of a need), e.g. an
+// Uber ride instead of transit. It's a first-class third classification
+// alongside Need and Want. (There is no "Comfort" *category* — only this flag.)
 export const NEED_WANT = ["Need", "Want", "Comfort"] as const;
 export type NeedWant = (typeof NEED_WANT)[number];
 
@@ -48,8 +36,14 @@ export type NeedWant = (typeof NEED_WANT)[number];
 // not spending. Instead of a Need/Want flag they carry an income type. Kind is
 // derived purely from the amount sign (amountCents < 0 -> income), so no extra
 // stored flag is needed to tell them apart.
-export const INCOME_TYPES = ["Refund", "Salary"] as const;
+// "Salary" is genuine income (counts as net-positive money in). "Refund" and
+// "Reimbursement" give money back on a purchase — they don't add income; instead
+// they can be linked to the expense they offset, which then stops counting.
+export const INCOME_TYPES = ["Salary", "Refund", "Reimbursement"] as const;
 export type IncomeType = (typeof INCOME_TYPES)[number];
+
+/** Income types that cancel a linked expense rather than counting as income. */
+export const OFFSET_INCOME_TYPES = ["Refund", "Reimbursement"] as const;
 
 /** True when a transaction is incoming money rather than spending. */
 export function isIncomeAmount(amountCents: number): boolean {

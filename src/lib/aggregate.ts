@@ -8,7 +8,10 @@ export interface AggExpense {
   date: Date;
   amountCents: number;
   needWant: string | null; // "Need" | "Want" | "Comfort" | null
-  incomeType?: string | null; // "Refund" | "Salary" | null (income rows)
+  incomeType?: string | null; // "Salary" | "Refund" | "Reimbursement" | null
+  // True when a refund/reimbursement cancels this spending row; such rows are
+  // excluded from every spend figure below.
+  voided?: boolean;
   categoryId: string | null;
   categoryName?: string | null;
   categoryColor?: string | null;
@@ -27,7 +30,9 @@ export function isIncome(e: { amountCents: number }): boolean {
   return e.amountCents < 0;
 }
 function onlyExpenses(expenses: AggExpense[]): AggExpense[] {
-  return expenses.filter((e) => !isIncome(e));
+  // Spending math counts real outgoing money only: not income (negatives) and
+  // not expenses that were refunded/reimbursed (voided).
+  return expenses.filter((e) => !isIncome(e) && !e.voided);
 }
 
 export interface IncomeTypeTotal {
@@ -108,7 +113,7 @@ export function categoryBreakdown(expenses: AggExpense[]): CategoryTotal[] {
     } else {
       map.set(key, {
         categoryId: e.categoryId,
-        name: e.categoryName ?? "Uncategorized",
+        name: e.categoryName ?? "Miscellaneous",
         color: e.categoryColor ?? null,
         totalCents: e.amountCents,
         count: 1,
@@ -248,6 +253,57 @@ export function incomeByMonthForYear(
   return out;
 }
 
+/**
+ * Salary income (positive magnitude) per month of a calendar year. Only
+ * `incomeType === "Salary"` counts as genuine money-in; refunds/reimbursements
+ * are handled by voiding their linked expense instead, so they're excluded here.
+ */
+export function salaryByMonthForYear(
+  expenses: AggExpense[],
+  year: number,
+): { month: string; totalCents: number }[] {
+  const map = new Map<string, number>();
+  for (const e of expenses) {
+    if (!isIncome(e) || e.incomeType !== "Salary") continue;
+    if (e.date.getFullYear() !== year) continue;
+    const key = monthKey(e.date);
+    map.set(key, (map.get(key) ?? 0) + -e.amountCents);
+  }
+  const out: { month: string; totalCents: number }[] = [];
+  for (let m = 1; m <= 12; m++) {
+    const key = `${year}-${String(m).padStart(2, "0")}`;
+    out.push({ month: key, totalCents: map.get(key) ?? 0 });
+  }
+  return out;
+}
+
+/** Salary income (positive) recorded in a single "YYYY-MM" month. */
+export function salaryForMonth(expenses: AggExpense[], month: string): number {
+  let total = 0;
+  for (const e of expenses) {
+    if (!isIncome(e) || e.incomeType !== "Salary") continue;
+    if (monthKey(e.date) !== month) continue;
+    total += -e.amountCents;
+  }
+  return total;
+}
+
+/**
+ * Element-wise sum of month series that share the same months (e.g. job income
+ * + salary income). Keyed by the first series' months.
+ */
+export function addMonthSeries(
+  base: { month: string; totalCents: number }[],
+  ...others: { month: string; totalCents: number }[][]
+): { month: string; totalCents: number }[] {
+  const maps = others.map((s) => new Map(s.map((d) => [d.month, d.totalCents])));
+  return base.map(({ month, totalCents }) => ({
+    month,
+    totalCents:
+      totalCents + maps.reduce((acc, m) => acc + (m.get(month) ?? 0), 0),
+  }));
+}
+
 export interface CashflowDatum {
   month: string; // "YYYY-MM"
   incomeCents: number; // money in (positive)
@@ -278,6 +334,22 @@ export function cashflowByMonthForYear(
     out.push({ month, incomeCents, spendCents, netCents: incomeCents - spendCents });
   }
   return out;
+}
+
+/**
+ * Zip an income series with a spend series into the cash-flow shape the trend
+ * chart wants, keyed by the income series' months. Used by the dashboard to pair
+ * job-sourced income with expense-sourced spend.
+ */
+export function combineCashflow(
+  incomeByMonth: { month: string; totalCents: number }[],
+  spendByMonth: { month: string; totalCents: number }[],
+): CashflowDatum[] {
+  const spend = new Map(spendByMonth.map((d) => [d.month, d.totalCents]));
+  return incomeByMonth.map(({ month, totalCents: incomeCents }) => {
+    const spendCents = spend.get(month) ?? 0;
+    return { month, incomeCents, spendCents, netCents: incomeCents - spendCents };
+  });
 }
 
 /** Spend per month restricted to a calendar year, filling empty months with 0. */

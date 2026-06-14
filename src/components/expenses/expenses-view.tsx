@@ -16,6 +16,8 @@ import {
   Search,
   Repeat,
   X,
+  Link2,
+  Unlink,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -44,12 +46,17 @@ import {
   updateExpense,
   deleteExpense,
   bulkExpenseAction,
+  linkRefund,
 } from "@/app/actions";
 import { ymdToDate } from "@/lib/dates";
-import { NEED_WANT, INCOME_TYPES } from "@/lib/categories";
+import {
+  NEED_WANT,
+  INCOME_TYPES,
+  OFFSET_INCOME_TYPES,
+} from "@/lib/categories";
 import { expensesQueryKey, fetchExpenses } from "@/lib/expenses-query";
 import type { ExpenseInput } from "@/app/actions";
-import type { ExpenseDTO, CategoryDTO, PaymentMethodDTO } from "@/lib/types";
+import type { ExpenseDTO, CategoryDTO } from "@/lib/types";
 
 /** Apply an inline-edit patch to a DTO for optimistic cache updates. */
 function patchExpense(
@@ -112,11 +119,9 @@ const PRESETS: { value: Preset; label: string }[] = [
 
 export function ExpensesView({
   categories,
-  paymentMethods,
   initialPreset = "all",
 }: {
   categories: CategoryDTO[];
-  paymentMethods: PaymentMethodDTO[];
   initialPreset?: Preset;
 }) {
   const queryClient = useQueryClient();
@@ -161,6 +166,8 @@ export function ExpensesView({
     const q = deferredQuery.trim().toLowerCase();
 
     return expenses.filter((e) => {
+      // Income/credit rows live in their own table below, not the spend table.
+      if (e.isIncome) return false;
       if (q) {
         const hay = `${e.description} ${e.categoryName ?? ""} ${e.notes ?? ""}`.toLowerCase();
         if (!hay.includes(q)) return false;
@@ -229,7 +236,34 @@ export function ExpensesView({
     }
   }
 
-  const total = sorted.reduce((a, e) => a + e.effectiveAmountCents, 0);
+  // Voided expenses (refunded/reimbursed) are shown greyed out but don't count
+  // toward the spend total.
+  const total = sorted.reduce(
+    (a, e) => a + (e.voided ? 0 : e.effectiveAmountCents),
+    0,
+  );
+
+  // Income / credit rows for the separate table below. Search applies; the
+  // spend-only presets/column filters don't. Newest first.
+  const incomeRows = React.useMemo(() => {
+    const q = deferredQuery.trim().toLowerCase();
+    return expenses
+      .filter((e) => e.isIncome)
+      .filter((e) =>
+        q
+          ? `${e.description} ${e.refundsDescription ?? ""}`
+              .toLowerCase()
+              .includes(q)
+          : true,
+      )
+      .sort((a, b) => b.date.localeCompare(a.date));
+  }, [expenses, deferredQuery]);
+
+  // Spending rows offered as link targets for a refund/reimbursement.
+  const spendingExpenses = React.useMemo(
+    () => expenses.filter((e) => !e.isIncome),
+    [expenses],
+  );
 
   // Selection helpers
   const allVisibleSelected =
@@ -274,7 +308,7 @@ export function ExpensesView({
 
   const groupKey = (e: ExpenseDTO) =>
     preset === "category"
-      ? e.categoryName ?? "Uncategorized"
+      ? e.categoryName ?? "Miscellaneous"
       : e.needWant ?? "Unspecified";
 
   // Group totals computed over the *full* filtered set so each header shows the
@@ -335,7 +369,6 @@ export function ExpensesView({
           </SelectTrigger>
           <SelectContent className="max-h-72">
             <SelectItem value="all">All categories</SelectItem>
-            <SelectItem value="none">Uncategorized</SelectItem>
             {categories.map((c) => (
               <SelectItem key={c.id} value={c.id}>
                 {c.name}
@@ -490,11 +523,22 @@ export function ExpensesView({
         </div>
       )}
 
+      {/* Income & credits — salary, refunds, reimbursements. Refunds and
+          reimbursements can be linked to the expense they cancel. */}
+      <IncomeSection
+        rows={incomeRows}
+        spendingExpenses={spendingExpenses}
+        money={money}
+        invalidate={invalidate}
+        toast={toast}
+        setEditing={setEditing}
+        inlineUpdate={inlineUpdate}
+      />
+
       {editing && (
         <EditExpenseDialog
           expense={editing}
           categories={categories}
-          paymentMethods={paymentMethods}
           open={!!editing}
           onOpenChange={(v) => !v && setEditing(null)}
         />
@@ -609,7 +653,10 @@ function ExpenseTable(props: TableProps) {
           {rows.map((e) => (
             <tr
               key={e.id}
-              className="border-b border-[var(--glass-rim)] last:border-0 transition-colors duration-200 ease-glass hover:bg-[var(--glass-fill)]"
+              className={`border-b border-[var(--glass-rim)] last:border-0 transition-colors duration-200 ease-glass hover:bg-[var(--glass-fill)] ${
+                e.voided ? "text-muted-foreground/60" : ""
+              }`}
+              title={e.voided ? "Refunded / reimbursed — not counted" : undefined}
             >
               <td className="px-3 py-2">
                 <Checkbox
@@ -623,16 +670,18 @@ function ExpenseTable(props: TableProps) {
               </td>
               <td className="px-3 py-2">
                 <div className="flex items-center gap-2">
-                  <span className="font-medium">{e.description}</span>
+                  <span className={`font-medium ${e.voided ? "line-through" : ""}`}>
+                    {e.description}
+                  </span>
                   {e.recurring && (
                     <Repeat className="h-3.5 w-3.5 text-muted-foreground" />
                   )}
+                  {e.voided && (
+                    <Badge variant="outline" className="text-[10px]">
+                      refunded
+                    </Badge>
+                  )}
                 </div>
-                {e.paymentMethodName && (
-                  <span className="text-xs text-muted-foreground">
-                    {e.paymentMethodName}
-                  </span>
-                )}
               </td>
               <td className="px-3 py-2">
                 <Select
@@ -640,10 +689,9 @@ function ExpenseTable(props: TableProps) {
                   onValueChange={(v) => inlineUpdate(e.id, { categoryId: v })}
                 >
                   <SelectTrigger className="h-8 w-[150px] rounded-md border-0 bg-transparent px-2 shadow-none [backdrop-filter:none] hover:bg-secondary">
-                    <SelectValue placeholder="Uncategorized" />
+                    <SelectValue placeholder="Select category" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="none">Uncategorized</SelectItem>
                     {categories.map((c) => (
                       <SelectItem key={c.id} value={c.id}>
                         {c.name}
@@ -743,6 +791,262 @@ function ExpenseTable(props: TableProps) {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+/* ------------------------------------------------ Income & credits table */
+
+function IncomeSection({
+  rows,
+  spendingExpenses,
+  money,
+  invalidate,
+  toast,
+  setEditing,
+  inlineUpdate,
+}: {
+  rows: ExpenseDTO[];
+  spendingExpenses: ExpenseDTO[];
+  money: (c: number) => string;
+  invalidate: () => void;
+  toast: ReturnType<typeof useToast>["toast"];
+  setEditing: (e: ExpenseDTO) => void;
+  inlineUpdate: (
+    id: string,
+    data: Parameters<typeof updateExpense>[1],
+  ) => Promise<void>;
+}) {
+  async function onDelete(id: string) {
+    await deleteExpense(id);
+    invalidate();
+    toast({ title: "Deleted", variant: "success" });
+  }
+
+  return (
+    <div className="space-y-2 pt-6">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold">Income &amp; credits</h2>
+        <span className="text-xs text-muted-foreground">
+          {rows.length} row{rows.length === 1 ? "" : "s"}
+        </span>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Salary counts as income. Refunds and reimbursements don&apos;t add
+        income — link one to the expense it cancels and that expense stops
+        counting.
+      </p>
+      {rows.length === 0 ? (
+        <div className="glass-strong rounded-2xl py-10 text-center text-sm text-muted-foreground">
+          No income or credits yet. Add a transaction with a negative amount
+          (salary, refund, or reimbursement).
+        </div>
+      ) : (
+        <div className="glass-strong overflow-x-auto rounded-2xl">
+          <table className="w-full min-w-[760px] text-sm">
+            <thead>
+              <tr className="eyebrow border-b border-[var(--glass-rim)] text-left text-muted-foreground">
+                <th className="px-3 py-2.5">Date</th>
+                <th className="px-3 py-2.5">Description</th>
+                <th className="px-3 py-2.5">Type</th>
+                <th className="px-3 py-2.5">Offsets expense</th>
+                <th className="px-3 py-2.5 text-right">Amount</th>
+                <th className="w-20 px-3 py-2.5 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((e) => {
+                const isOffset =
+                  e.incomeType != null &&
+                  (OFFSET_INCOME_TYPES as readonly string[]).includes(
+                    e.incomeType,
+                  );
+                return (
+                  <tr
+                    key={e.id}
+                    className="border-b border-[var(--glass-rim)] last:border-0 transition-colors duration-200 ease-glass hover:bg-[var(--glass-fill)]"
+                  >
+                    <td className="whitespace-nowrap px-3 py-2 tabular text-muted-foreground">
+                      {format(ymdToDate(e.date), "MMM d")}
+                    </td>
+                    <td className="px-3 py-2 font-medium">{e.description}</td>
+                    <td className="px-3 py-2">
+                      <Select
+                        value={e.incomeType ?? "none"}
+                        onValueChange={(v) =>
+                          inlineUpdate(e.id, { incomeType: v })
+                        }
+                      >
+                        <SelectTrigger className="h-8 w-[150px] rounded-md border-0 bg-transparent px-2 shadow-none [backdrop-filter:none] hover:bg-secondary">
+                          <SelectValue placeholder="—" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">—</SelectItem>
+                          {INCOME_TYPES.map((v) => (
+                            <SelectItem key={v} value={v}>
+                              {v}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </td>
+                    <td className="px-3 py-2">
+                      {isOffset ? (
+                        <LinkRefundControl
+                          refund={e}
+                          spendingExpenses={spendingExpenses}
+                          money={money}
+                          invalidate={invalidate}
+                          toast={toast}
+                        />
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2 text-right tabular font-medium text-emerald-600">
+                      + {money(-e.amountCents)}
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="flex justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          onClick={() => setEditing(e)}
+                          aria-label="Edit"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                          onClick={() => onDelete(e.id)}
+                          aria-label="Delete"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Searchable picker to link a refund/reimbursement to the expense it offsets. */
+function LinkRefundControl({
+  refund,
+  spendingExpenses,
+  money,
+  invalidate,
+  toast,
+}: {
+  refund: ExpenseDTO;
+  spendingExpenses: ExpenseDTO[];
+  money: (c: number) => string;
+  invalidate: () => void;
+  toast: ReturnType<typeof useToast>["toast"];
+}) {
+  const [open, setOpen] = React.useState(false);
+  const [q, setQ] = React.useState("");
+
+  const matches = React.useMemo(() => {
+    const query = q.trim().toLowerCase();
+    return spendingExpenses
+      .filter((e) =>
+        query ? e.description.toLowerCase().includes(query) : true,
+      )
+      .slice(0, 50);
+  }, [spendingExpenses, q]);
+
+  async function link(id: string | null) {
+    try {
+      await linkRefund(refund.id, id);
+      invalidate();
+      setOpen(false);
+      setQ("");
+      toast({ title: id ? "Linked" : "Unlinked", variant: "success" });
+    } catch (err) {
+      toast({
+        title: "Could not link",
+        description: err instanceof Error ? err.message : undefined,
+        variant: "error",
+      });
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-1">
+      <DropdownMenu open={open} onOpenChange={setOpen}>
+        <DropdownMenuTrigger asChild>
+          <Button variant="outline" size="sm" className="h-8 max-w-[220px]">
+            <Link2 className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">
+              {refund.refundsExpenseId
+                ? refund.refundsDescription ?? "Linked expense"
+                : "Link expense"}
+            </span>
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="w-72">
+          <div className="p-2">
+            <Input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              onKeyDown={(e) => e.stopPropagation()}
+              placeholder="Search expenses…"
+              className="h-8"
+              autoFocus
+            />
+          </div>
+          <DropdownMenuSeparator />
+          <div className="max-h-64 overflow-y-auto">
+            {matches.length === 0 ? (
+              <p className="px-3 py-4 text-center text-xs text-muted-foreground">
+                No matching expenses.
+              </p>
+            ) : (
+              matches.map((e) => (
+                <DropdownMenuItem
+                  key={e.id}
+                  onSelect={(ev) => {
+                    ev.preventDefault();
+                    link(e.id);
+                  }}
+                  className="flex items-center justify-between gap-3"
+                >
+                  <span className="truncate">
+                    {e.description}
+                    <span className="ml-1 text-xs text-muted-foreground">
+                      {format(ymdToDate(e.date), "MMM d")}
+                    </span>
+                  </span>
+                  <span className="tabular shrink-0 text-xs text-muted-foreground">
+                    {money(e.amountCents)}
+                  </span>
+                </DropdownMenuItem>
+              ))
+            )}
+          </div>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {refund.refundsExpenseId && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 text-muted-foreground hover:text-destructive"
+          onClick={() => link(null)}
+          aria-label="Unlink"
+        >
+          <Unlink className="h-4 w-4" />
+        </Button>
+      )}
     </div>
   );
 }

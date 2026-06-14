@@ -92,7 +92,7 @@ export default async function InvestmentsPage() {
   const lastUpdated = lastFetched ? dateToYMD(lastFetched) : null;
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <div className="mx-auto max-w-5xl space-y-6">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Investments</h1>
         <p className="text-sm text-muted-foreground">

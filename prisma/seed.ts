@@ -1,8 +1,5 @@
 import { PrismaClient } from "@prisma/client";
-import {
-  DEFAULT_CATEGORIES,
-  DEFAULT_PAYMENT_METHODS,
-} from "../src/lib/categories";
+import { DEFAULT_CATEGORIES } from "../src/lib/categories";
 
 const prisma = new PrismaClient();
 
@@ -17,16 +14,6 @@ async function main() {
     });
   }
 
-  // Payment methods
-  for (let i = 0; i < DEFAULT_PAYMENT_METHODS.length; i++) {
-    const name = DEFAULT_PAYMENT_METHODS[i];
-    await prisma.paymentMethod.upsert({
-      where: { name },
-      update: { sortOrder: i },
-      create: { name, sortOrder: i },
-    });
-  }
-
   // Settings singleton
   await prisma.settings.upsert({
     where: { id: "singleton" },
@@ -34,9 +21,14 @@ async function main() {
     create: { id: "singleton", currencyCode: "CAD", currencySymbol: "C$" },
   });
 
-  console.log(
-    `Seeded ${DEFAULT_CATEGORIES.length} categories, ${DEFAULT_PAYMENT_METHODS.length} payment methods, and settings.`,
-  );
+  // Budget/projection plan singleton (buckets/allocations fill in as used).
+  await prisma.budgetPlan.upsert({
+    where: { id: "singleton" },
+    update: {},
+    create: { id: "singleton" },
+  });
+
+  console.log(`Seeded ${DEFAULT_CATEGORIES.length} categories and settings.`);
 }
 
 main()

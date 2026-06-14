@@ -1,20 +1,15 @@
 import type { Metadata } from "next";
-import { Plus_Jakarta_Sans, JetBrains_Mono } from "next/font/google";
+import { Plus_Jakarta_Sans } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ToastProvider } from "@/components/ui/toast";
 import { QueryProvider } from "@/components/query-provider";
 
-// Plus Jakarta Sans — geometric, premium UI voice; JetBrains Mono carries the
-// money figures, labels and eyebrows (the finance-terminal cadence).
+// One typeface throughout — Plus Jakarta Sans (geometric, premium). Hierarchy
+// comes from weight, case and tracking; money columns use tabular figures.
 const sans = Plus_Jakarta_Sans({
   subsets: ["latin"],
   variable: "--font-sans",
-  display: "swap",
-});
-const mono = JetBrains_Mono({
-  subsets: ["latin"],
-  variable: "--font-mono",
   display: "swap",
 });
 
@@ -30,7 +25,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`${sans.variable} ${mono.variable} font-sans`}>
+      <body className={`${sans.variable} font-sans`}>
         <ThemeProvider
           attribute="class"
           defaultTheme="light"

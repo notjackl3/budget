@@ -4,10 +4,9 @@ import { guessCategory } from "@/lib/categorize";
 describe("guessCategory — merchant keyword rules", () => {
   const cases: [string, string | null, string][] = [
     ["UBER CANADA/UBEREATS TORONTO", "Restaurants", "eating-out"],
-    // Rideshare trips are now "comfort" (a need bought in its premium form),
-    // while true-necessity transit (passes, fuel) stays "transit".
-    ["UBER CANADA/UBERTRIP TORONTO", "Transportation", "comfort"],
-    ["LYFT *RIDE THU 8PM VANCOUVER", "Transportation", "comfort"],
+    // Rideshare trips (getting somewhere) map to transit, alongside passes/fuel.
+    ["UBER CANADA/UBERTRIP TORONTO", "Transportation", "transit"],
+    ["LYFT *RIDE THU 8PM VANCOUVER", "Transportation", "transit"],
     ["PRESTO FARE/TTC TORONTO", "Transportation", "transit"],
     ["STARBUCKS #123 TORONTO", "Restaurants", "coffee-snacks"],
     ["TIM HORTONS #456", "Restaurants", "coffee-snacks"],
@@ -16,7 +15,7 @@ describe("guessCategory — merchant keyword rules", () => {
     ["APPLE.COM/BILL 866-712-7753", "Retail and Grocery", "subscriptions"],
     ["SPOTIFY P0ABCDEF", "Retail and Grocery", "subscriptions"],
     ["UTM BOOKSTORE MISS", "Retail and Grocery", "school"],
-    ["SHOPPERS DRUG MART #123", "Retail and Grocery", "health"],
+    ["SHOPPERS DRUG MART #123", "Retail and Grocery", "groceries"],
     ["AIR CANADA TORONTO", "Transportation", "explore"],
     ["MINISO CANADA TORONTO", "Retail and Grocery", "shopping"],
     ["CINEPLEX ODEON", "Hotel, Entertainment and Recreation", "explore"],
@@ -53,7 +52,7 @@ describe("guessCategory — need/want guess", () => {
     expect(guessCategory("ZZZ", null).needWant).toBeNull();
   });
 
-  it("marks rideshare trips as Comfort (a need you overspend on)", () => {
+  it("marks rideshare trips as Comfort (a need bought in premium form)", () => {
     expect(guessCategory("UBER CANADA/UBERTRIP TORONTO").needWant).toBe(
       "Comfort",
     );

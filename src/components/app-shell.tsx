@@ -12,19 +12,24 @@ import {
   Wallet,
   Briefcase,
   TrendingUp,
+  LineChart,
+  Library,
+  Plus,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { QuickAdd } from "@/components/quick-add";
 import { Button } from "@/components/ui/button";
 import { logoutAction } from "@/app/actions";
-import type { CategoryDTO, PaymentMethodDTO } from "@/lib/types";
+import type { CategoryDTO } from "@/lib/types";
 
 const NAV = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/expenses", label: "Expenses", icon: Table2 },
   { href: "/income", label: "Income", icon: Briefcase },
   { href: "/investments", label: "Investments", icon: TrendingUp },
+  { href: "/projection", label: "Projection", icon: LineChart },
+  { href: "/library", label: "Portfolio Library", icon: Library },
   { href: "/review", label: "Weekly Review", icon: CheckCircle2 },
   { href: "/import", label: "Import", icon: Upload },
   { href: "/settings", label: "Settings", icon: SettingsIcon },
@@ -32,11 +37,9 @@ const NAV = [
 
 export function AppShell({
   categories,
-  paymentMethods,
   children,
 }: {
   categories: CategoryDTO[];
-  paymentMethods: PaymentMethodDTO[];
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
@@ -54,6 +57,16 @@ export function AppShell({
           </div>
           <span className="font-semibold tracking-tight">Budget</span>
         </div>
+        <div className="mb-3">
+          <QuickAdd
+            categories={categories}
+            trigger={
+              <Button className="w-full justify-center">
+                <Plus className="h-4 w-4" /> Add expense
+              </Button>
+            }
+          />
+        </div>
         <nav className="flex flex-1 flex-col gap-1">
           {NAV.map((item) => {
             const Icon = item.icon;
@@ -63,15 +76,12 @@ export function AppShell({
                 key={item.href}
                 href={item.href}
                 className={cn(
-                  "group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-200 ease-glass",
+                  "group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-200 ease-glass",
                   active
                     ? "glass glass-active text-foreground"
                     : "text-muted-foreground hover:-translate-y-px hover:text-foreground",
                 )}
               >
-                {active && (
-                  <span className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-full bg-primary" />
-                )}
                 <Icon
                   className={cn(
                     "h-4 w-4 transition-colors",
@@ -101,7 +111,16 @@ export function AppShell({
             <span className="font-semibold">Budget</span>
           </div>
           <div className="ml-auto flex items-center gap-2">
-            <QuickAdd categories={categories} paymentMethods={paymentMethods} />
+            <div className="md:hidden">
+              <QuickAdd
+                categories={categories}
+                trigger={
+                  <Button size="sm">
+                    <Plus className="h-4 w-4" /> Add
+                  </Button>
+                }
+              />
+            </div>
             <ThemeToggle />
           </div>
         </header>

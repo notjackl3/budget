@@ -24,14 +24,18 @@ interface Rule {
   slug: string;
 }
 
+// Rideshare trips (Uber/Lyft). Categorized as Transit (there is no Comfort
+// category), but flagged need/want = "Comfort" — a need (getting somewhere)
+// bought in its premium form.
+const RIDESHARE_RE = /UBERTRIP|UBER\s*\*?\s*TRIP|LYFT/;
+
 // Order matters: first match wins.
 const RULES: Rule[] = [
   // Coffee / snacks (check before generic restaurants)
   { test: /STARBUCKS|TIM HORTON|TIMHORTON|COFFEE|CAFE|\bCAF\b|YOGEN FRUZ|DAVIDSTEA|SECOND CUP|BUBBLE TEA|CHATIME|GONG CHA|COBS BREAD|DONUT/, slug: "coffee-snacks" },
-  // Rideshare trips (Uber/Lyft) — a need (getting somewhere) bought in its
-  // premium form, so it maps to Comfort rather than Transit. Must come before
-  // the eats rule (which matches UBER EATS) and the transit rule.
-  { test: /UBERTRIP|UBER\s*\*?\s*TRIP|LYFT/, slug: "comfort" },
+  // Rideshare → Transit category. Must come before the eats rule (which matches
+  // UBER EATS) and the generic transit rule.
+  { test: RIDESHARE_RE, slug: "transit" },
   // Transit (true necessities: transit passes, fuel, parking)
   { test: /PRESTO|\bTTC\b|GO TRANSIT|GO TRAIN|VIA RAIL|TRANSIT|PARKING|PETRO|ESSO|SHELL|GAS BAR|COINAMATIC.*WASH/, slug: "transit" },
   // Food delivery / restaurants
@@ -42,8 +46,8 @@ const RULES: Rule[] = [
   { test: /APPLE\.COM\/BILL|APPLE\.COM|ICLOUD|SPOTIFY|NETFLIX|DISNEY|CRUNCHYROLL|YOUTUBE|GOOGLE\s*\*|OPENAI|CHATGPT|ROGERS|BELL CANADA|FIDO|TELUS|FREEDOM MOBILE|AUDIBLE|AMAZON PRIME|MICROSOFT|ADOBE|NOTION|GITHUB/, slug: "subscriptions" },
   // School
   { test: /BOOKSTORE|TUITION|UNIVERSITY|COLLEGE|\bUTM\b|\bUOFT\b|U OF T|REGISTRAR|CAMPUS|TEXTBOOK/, slug: "school" },
-  // Health / pharmacy
-  { test: /PHARMA|SHOPPERS DRUG|REXALL|DENTAL|DENTIST|CLINIC|MEDICAL|OPTICAL|PHYSIO|HOSPITAL|WELL\.CA|GUARDIAN/, slug: "health" },
+  // Pharmacy / health — folded into Groceries (the Health category was removed).
+  { test: /PHARMA|SHOPPERS DRUG|REXALL|DENTAL|DENTIST|CLINIC|MEDICAL|OPTICAL|PHYSIO|HOSPITAL|WELL\.CA|GUARDIAN/, slug: "groceries" },
   // Explore (travel: flights, hotels, etc.)
   { test: /AIR CANADA|WESTJET|FLAIR|PORTER AIR|EXPEDIA|BOOKING\.COM|AIRBNB|HOTEL|MARRIOTT|HILTON|AIRLINE|AIRPORT|FLIGHT/, slug: "explore" },
   // Tech / tools
@@ -63,7 +67,7 @@ const CIBC_CATEGORY_FALLBACK: Record<string, string> = {
   "Professional and Financial Services": "miscellaneous",
   "Hotel, Entertainment and Recreation": "explore",
   "Home and Office Improvement": "tech-tools",
-  "Health and Education": "health",
+  "Health and Education": "groceries",
   "Foreign Currency Transactions": "miscellaneous",
   "Other Transactions": "miscellaneous",
 };
@@ -73,14 +77,12 @@ const NEED_WANT_BY_SLUG: Record<string, NeedWant> = {
   "rent-housing": "Need",
   groceries: "Need",
   transit: "Need",
-  health: "Need",
   school: "Need",
   subscriptions: "Want",
   "eating-out": "Want",
   "coffee-snacks": "Want",
   shopping: "Want",
   explore: "Want",
-  comfort: "Comfort",
 };
 
 export function guessCategory(
@@ -114,6 +116,11 @@ export function guessCategory(
         opts.mealNeedCents ?? DEFAULT_MEAL_NEED_CENTS,
       ),
     };
+  }
+
+  // Rideshare is a Need bought in premium form → Comfort (category stays Transit).
+  if (RIDESHARE_RE.test(desc)) {
+    return { categorySlug: slug, needWant: "Comfort" };
   }
 
   return { categorySlug: slug, needWant: NEED_WANT_BY_SLUG[slug] ?? null };

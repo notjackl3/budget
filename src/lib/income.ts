@@ -28,6 +28,10 @@ export interface IncomeJob {
   cadence: string;
   hoursPerWeek?: number | null;
   active?: boolean;
+  // Active window, "YYYY-MM-DD" (or null). startDate null = always-on from the
+  // beginning; endDate null = still ongoing.
+  startDate?: string | null;
+  endDate?: string | null;
 }
 
 // How many pay periods occur per year for each fixed cadence.
@@ -73,4 +77,44 @@ export function incomeTotals(jobs: IncomeJob[]): {
     annualCents += annualIncomeCents(j);
   }
   return { monthlyCents: Math.round(annualCents / 12), annualCents };
+}
+
+/**
+ * Is the job earning during the given "YYYY-MM" month? A paused job never earns;
+ * otherwise the month must fall inside the [startDate, endDate] window (compared
+ * at month granularity). Missing bounds mean open-ended on that side.
+ */
+export function jobActiveInMonth(job: IncomeJob, month: string): boolean {
+  if (job.active === false) return false;
+  const start = job.startDate ? job.startDate.slice(0, 7) : null;
+  const end = job.endDate ? job.endDate.slice(0, 7) : null;
+  if (start && month < start) return false;
+  if (end && month > end) return false;
+  return true;
+}
+
+/** Combined monthly income from all jobs active in the given "YYYY-MM" month. */
+export function jobIncomeForMonth(jobs: IncomeJob[], month: string): number {
+  let totalCents = 0;
+  for (const j of jobs) {
+    if (jobActiveInMonth(j, month)) totalCents += monthlyIncomeCents(j);
+  }
+  return totalCents;
+}
+
+/**
+ * Job-sourced income for each of the 12 months of a calendar year. A job
+ * contributes its normalized monthly pay to every month its active window
+ * covers — the dashboard's income bars come from here, not from transactions.
+ */
+export function jobIncomeByMonthForYear(
+  jobs: IncomeJob[],
+  year: number,
+): { month: string; totalCents: number }[] {
+  const out: { month: string; totalCents: number }[] = [];
+  for (let m = 1; m <= 12; m++) {
+    const month = `${year}-${String(m).padStart(2, "0")}`;
+    out.push({ month, totalCents: jobIncomeForMonth(jobs, month) });
+  }
+  return out;
 }

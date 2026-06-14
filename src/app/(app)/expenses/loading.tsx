@@ -6,7 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
  */
 export default function ExpensesLoading() {
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
+    <div className="mx-auto max-w-5xl space-y-6">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Expenses</h1>
         <p className="text-sm text-muted-foreground">
@@ -28,7 +28,7 @@ export default function ExpensesLoading() {
         </div>
 
         {/* Table */}
-        <div className="overflow-hidden rounded-xl border">
+        <div className="glass-strong overflow-hidden rounded-2xl">
           <div className="border-b bg-card px-3 py-2.5">
             <Skeleton className="h-4 w-32" />
           </div>

@@ -5,7 +5,6 @@
 export const TAG = {
   expenses: "expenses",
   categories: "categories",
-  paymentMethods: "payment-methods",
   settings: "settings",
   reflections: "reflections",
   statements: "statements",
@@ -13,4 +12,6 @@ export const TAG = {
   holdings: "holdings",
   quotes: "quotes",
   snapshots: "snapshots",
+  plan: "plan",
+  returnStats: "return-stats",
 } as const;

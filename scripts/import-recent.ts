@@ -136,9 +136,6 @@ async function main() {
   const idToSlug = new Map(categories.map((c) => [c.id, c.slug]));
   const miscId = slugToId.get("miscellaneous") ?? categories[0].id;
   const ruleMap = await getMerchantRuleMap();
-  const creditCard = await prisma.paymentMethod.findFirst({
-    where: { name: { contains: "Credit" } },
-  });
 
   const existing = await prisma.expense.findMany({ select: { dedupeHash: true } });
   const seen = new Set(existing.map((e) => e.dedupeHash));
@@ -181,7 +178,6 @@ async function main() {
       date: ymdToDate(date),
       amountCents: cents,
       categoryId: resolved.categoryId,
-      paymentMethodId: creditCard?.id ?? null,
       needWant: resolved.needWant,
       incomeType: resolved.incomeType,
       recurring: false,

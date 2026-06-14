@@ -28,6 +28,8 @@ export interface JobDTO {
   payCents: number;
   cadence: string;
   hoursPerWeek: number | null;
+  startDate: string | null; // "YYYY-MM-DD"
+  endDate: string | null; // "YYYY-MM-DD"
   active: boolean;
 }
 
@@ -111,6 +113,8 @@ function JobRow({ job }: { job: JobDTO }) {
   const [hours, setHours] = React.useState(
     job.hoursPerWeek != null ? String(job.hoursPerWeek) : "",
   );
+  const [startDate, setStartDate] = React.useState(job.startDate ?? "");
+  const [endDate, setEndDate] = React.useState(job.endDate ?? "");
   const [active, setActive] = React.useState(job.active);
 
   // Live monthly figure for this row from the current inputs.
@@ -140,7 +144,7 @@ function JobRow({ job }: { job: JobDTO }) {
   }
 
   return (
-    <div className="rounded-lg border bg-card p-3">
+    <div className="glass rounded-xl p-3">
       <div className="flex flex-wrap items-end gap-3">
         <div className="min-w-[8rem] flex-1 space-y-1">
           <Label className="text-xs">Job</Label>
@@ -214,6 +218,32 @@ function JobRow({ job }: { job: JobDTO }) {
             />
           </div>
         )}
+        <div className="w-36 space-y-1">
+          <Label className="text-xs">Started</Label>
+          <Input
+            type="date"
+            value={startDate}
+            onChange={(e) => setStartDate(e.target.value)}
+            onBlur={() =>
+              startDate !== (job.startDate ?? "") &&
+              persist({ startDate: startDate || null })
+            }
+            className="h-8 text-xs"
+          />
+        </div>
+        <div className="w-36 space-y-1">
+          <Label className="text-xs">Ended (optional)</Label>
+          <Input
+            type="date"
+            value={endDate}
+            onChange={(e) => setEndDate(e.target.value)}
+            onBlur={() =>
+              endDate !== (job.endDate ?? "") &&
+              persist({ endDate: endDate || null })
+            }
+            className="h-8 text-xs"
+          />
+        </div>
       </div>
       <div className="mt-3 flex items-center justify-between border-t pt-2">
         <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
@@ -257,6 +287,8 @@ function AddJob() {
   const [pay, setPay] = React.useState("");
   const [cadence, setCadence] = React.useState("monthly");
   const [hours, setHours] = React.useState("");
+  const [startDate, setStartDate] = React.useState("");
+  const [endDate, setEndDate] = React.useState("");
   const [saving, setSaving] = React.useState(false);
 
   async function add() {
@@ -269,12 +301,16 @@ function AddJob() {
         pay: pay || 0,
         cadence,
         hoursPerWeek: cadence === "hourly" ? hours : null,
+        startDate: startDate || null,
+        endDate: endDate || null,
       });
       setName("");
       setEmployer("");
       setPay("");
       setHours("");
       setCadence("monthly");
+      setStartDate("");
+      setEndDate("");
       router.refresh();
       toast({ title: "Job added", variant: "success" });
     } catch (e) {
@@ -352,6 +388,24 @@ function AddJob() {
           />
         </div>
       )}
+      <div className="w-36 space-y-1">
+        <Label className="text-xs">Started</Label>
+        <Input
+          type="date"
+          value={startDate}
+          onChange={(e) => setStartDate(e.target.value)}
+          className="h-9 text-xs"
+        />
+      </div>
+      <div className="w-36 space-y-1">
+        <Label className="text-xs">Ended (optional)</Label>
+        <Input
+          type="date"
+          value={endDate}
+          onChange={(e) => setEndDate(e.target.value)}
+          className="h-9 text-xs"
+        />
+      </div>
       <Button onClick={add} disabled={saving || !name.trim()}>
         <Plus className="h-4 w-4" /> Add
       </Button>

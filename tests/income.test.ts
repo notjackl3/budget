@@ -5,6 +5,9 @@ import {
   incomeTotals,
   isCadence,
   cadenceLabel,
+  jobActiveInMonth,
+  jobIncomeForMonth,
+  jobIncomeByMonthForYear,
 } from "../src/lib/income";
 
 describe("annualIncomeCents — cadence normalization", () => {
@@ -57,6 +60,42 @@ describe("incomeTotals", () => {
   it("treats a missing active flag as active", () => {
     const totals = incomeTotals([{ payCents: 100000, cadence: "monthly" }]);
     expect(totals.annualCents).toBe(1_200_000);
+  });
+});
+
+describe("jobActiveInMonth — start/end window", () => {
+  const job = { payCents: 100000, cadence: "monthly", startDate: "2026-03-01", endDate: "2026-08-31" };
+  it("is active only within [start, end] at month granularity", () => {
+    expect(jobActiveInMonth(job, "2026-02")).toBe(false); // before start
+    expect(jobActiveInMonth(job, "2026-03")).toBe(true); // start month
+    expect(jobActiveInMonth(job, "2026-06")).toBe(true);
+    expect(jobActiveInMonth(job, "2026-08")).toBe(true); // end month
+    expect(jobActiveInMonth(job, "2026-09")).toBe(false); // after end
+  });
+  it("open-ended on either side when a bound is missing", () => {
+    expect(jobActiveInMonth({ payCents: 1, cadence: "monthly" }, "2020-01")).toBe(true);
+    expect(jobActiveInMonth({ payCents: 1, cadence: "monthly", startDate: "2026-05-01" }, "2030-12")).toBe(true);
+  });
+  it("a paused job is never active", () => {
+    expect(jobActiveInMonth({ ...job, active: false }, "2026-06")).toBe(false);
+  });
+});
+
+describe("jobIncomeForMonth / jobIncomeByMonthForYear", () => {
+  const jobs = [
+    { payCents: 500000, cadence: "monthly", startDate: "2026-01-01", endDate: null }, // $5k all year
+    { payCents: 120000, cadence: "monthly", startDate: "2026-04-15", endDate: "2026-06-30" }, // $1.2k Apr–Jun
+  ];
+  it("sums monthly pay of jobs active that month", () => {
+    expect(jobIncomeForMonth(jobs, "2026-03")).toBe(500000);
+    expect(jobIncomeForMonth(jobs, "2026-05")).toBe(620000);
+    expect(jobIncomeForMonth(jobs, "2026-07")).toBe(500000);
+  });
+  it("produces a 12-month series", () => {
+    const series = jobIncomeByMonthForYear(jobs, 2026);
+    expect(series).toHaveLength(12);
+    expect(series.find((s) => s.month === "2026-05")?.totalCents).toBe(620000);
+    expect(series.find((s) => s.month === "2026-12")?.totalCents).toBe(500000);
   });
 });
 
