@@ -1,0 +1,53 @@
+import { describe, it, expect } from "vitest";
+import {
+  parseAmountToCents,
+  dollarsToCents,
+  centsToDecimalString,
+  formatMoney,
+} from "@/lib/money";
+
+describe("parseAmountToCents", () => {
+  it("parses plain amounts", () => {
+    expect(parseAmountToCents("41.39")).toBe(4139);
+    expect(parseAmountToCents("1,363.85")).toBe(136385);
+    expect(parseAmountToCents("0.00")).toBe(0);
+  });
+
+  it("treats a trailing minus as a credit", () => {
+    expect(parseAmountToCents("41.39-")).toBe(-4139);
+    expect(parseAmountToCents("-41.39")).toBe(-4139);
+  });
+
+  it("avoids floating-point drift", () => {
+    expect(parseAmountToCents("0.10")).toBe(10);
+    expect(parseAmountToCents("105.94")).toBe(10594);
+  });
+});
+
+describe("dollarsToCents", () => {
+  it("rounds to nearest cent", () => {
+    expect(dollarsToCents(12.34)).toBe(1234);
+    expect(dollarsToCents("9.005")).toBe(901);
+    expect(dollarsToCents("")).toBe(0);
+  });
+});
+
+describe("centsToDecimalString", () => {
+  it("formats with two decimals", () => {
+    expect(centsToDecimalString(136385)).toBe("1363.85");
+    expect(centsToDecimalString(5)).toBe("0.05");
+  });
+});
+
+describe("formatMoney", () => {
+  it("formats CAD with grouping", () => {
+    expect(formatMoney(136385)).toBe("C$1,363.85");
+    expect(formatMoney(4139, "C$")).toBe("C$41.39");
+  });
+  it("formats negatives with a leading minus", () => {
+    expect(formatMoney(-500)).toBe("-C$5.00");
+  });
+  it("respects a custom symbol", () => {
+    expect(formatMoney(10000, "$")).toBe("$100.00");
+  });
+});

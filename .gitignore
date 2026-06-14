@@ -1,0 +1,23 @@
+node_modules
+.next
+out
+build
+*.log
+.DS_Store
+
+# env
+.env
+.env*.local
+
+# database
+prisma/*.db
+prisma/*.db-journal
+prisma/*.db.bak
+/data/*.db
+
+# uploads
+/uploads
+
+# personal financial data (real bank statements & fixtures)
+/statements
+/tests/fixtures

@@ -1,0 +1,233 @@
+// Budget & spending tracker — Prisma schema.
+//
+// Default provider is SQLite for zero-setup local dev (the file survives
+// restarts). To deploy on hosted Postgres (Vercel + Supabase/Neon), change
+// `provider` to "postgresql" and point DATABASE_URL at your instance, then run
+// `prisma migrate deploy`. All field types used here are Postgres-compatible.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// A spending category. Seeded with sensible defaults but fully editable in
+// Settings (hence a table rather than a hard enum).
+model Category {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  // Stable key used by the auto-categorizer rules so renames don't break them.
+  slug      String    @unique
+  color     String? // hex accent for charts/badges
+  sortOrder Int       @default(0)
+  archived  Boolean   @default(false)
+  expenses  Expense[]
+  merchantRules MerchantRule[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// How an expense was paid. Editable in Settings.
+model PaymentMethod {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  sortOrder Int       @default(0)
+  archived  Boolean   @default(false)
+  expenses  Expense[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// A single spending record. Amount is stored as integer cents to avoid float
+// rounding; month/week are derived from `date` at read time, never stored.
+model Expense {
+  id          String  @id @default(cuid())
+  description String
+  date        DateTime
+  // What was charged (matches the bank statement; used for dedupe).
+  amountCents Int
+  // Optional manual override of what it actually cost you (e.g. after a friend
+  // pays you back). null = no override, so effective cost = amountCents. All
+  // analytics use the effective cost.
+  effectiveCents Int?
+  // "Need" | "Want" | "Comfort" | null — only meaningful for spending (amount >= 0).
+  needWant    String?
+  // "Refund" | "Salary" | null — only meaningful for incoming money
+  // (amountCents < 0). The expense/income kind itself is derived from the
+  // amount sign, not stored.
+  incomeType  String?
+  notes       String?
+  recurring   Boolean @default(false)
+  reviewed    Boolean @default(false)
+
+  categoryId      String?
+  category        Category?      @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  paymentMethodId String?
+  paymentMethod   PaymentMethod? @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
+
+  // Traceability: which uploaded statement this row came from (null = manual).
+  sourceStatementId String?
+  sourceStatement   Statement? @relation(fields: [sourceStatementId], references: [id], onDelete: SetNull)
+
+  // Stable fingerprint (date|amount|normalized-description) used for duplicate
+  // detection during statement import.
+  dedupeHash String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([date])
+  @@index([categoryId])
+  @@index([dedupeHash])
+  // The weekly review filters on `reviewed`; index it so that scan stays cheap
+  // as the table grows.
+  @@index([reviewed])
+}
+
+// An uploaded PDF statement. We keep the metadata for traceability even after
+// the transactions are committed.
+model Statement {
+  id          String    @id @default(cuid())
+  filename    String
+  periodStart DateTime?
+  periodEnd   DateTime?
+  // e.g. "CIBC Dividend Visa — Feb 2025"
+  label       String?
+  expenses    Expense[]
+
+  createdAt DateTime @default(now())
+}
+
+// Learned categorization memory. Each time the user manually sets a category
+// and/or need-want on an expense during review, we remember that choice keyed
+// by a normalized "merchant key" derived from the description (see
+// lib/merchant-key.ts). On the next statement import, rows whose merchant key
+// matches a rule are pre-filled with the remembered choice, so the user only
+// has to confirm instead of re-correcting the same merchants every month.
+model MerchantRule {
+  id String @id @default(cuid())
+  // Normalized merchant key (uppercase, punctuation/store-numbers stripped).
+  // Unique so each merchant has exactly one remembered preference.
+  merchantKey String @unique
+  // A real description that produced this rule, kept for display/debugging.
+  sampleDescription String
+
+  // Remembered category. SetNull (not Cascade) so deleting a category just
+  // forgets the category preference rather than the whole rule (the need-want
+  // half may still be useful).
+  categoryId String?
+  category   Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  // Remembered "Need" | "Want" | "Comfort" | null (for this merchant's charges).
+  needWant String?
+  // Remembered "Refund" | "Salary" | null (for this merchant's credits). Kept
+  // separately from needWant because one merchant can produce both a charge and
+  // a refund, which want different labels.
+  incomeType String?
+
+  // How many times the user has confirmed this mapping — a rough confidence
+  // signal, surfaced for auditing.
+  hits Int @default(1)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([categoryId])
+}
+
+// Per-month reflection written during monthly review. Month is "YYYY-MM".
+model MonthlyReflection {
+  id         String @id @default(cuid())
+  month      String @unique
+  reflection String @default("")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Singleton app settings (always id = "singleton").
+model Settings {
+  id             String @id @default("singleton")
+  currencyCode   String @default("CAD")
+  currencySymbol String @default("C$")
+  // Per-meal "need floor" for eating out: the first this-many cents of any meal
+  // counts as a Need, the excess as Comfort. Used by the analytics split.
+  mealNeedCents  Int    @default(1500)
+
+  updatedAt DateTime @updatedAt
+}
+
+// A job / income source. Pay is stored in cents at the given cadence; the
+// Income page normalizes everything to a monthly and annual figure. Not linked
+// to expenses (income transactions are tracked separately on their own rows).
+model Job {
+  id           String  @id @default(cuid())
+  name         String
+  employer     String?
+  // Pay amount in cents, interpreted at `cadence`.
+  payCents     Int     @default(0)
+  // "hourly" | "weekly" | "biweekly" | "semimonthly" | "monthly" | "annual"
+  cadence      String  @default("monthly")
+  // Hours/week, used only to annualize an hourly cadence.
+  hoursPerWeek Float?
+  // Whether this job currently earns (counts toward the income totals).
+  active       Boolean @default(true)
+  notes        String?
+  sortOrder    Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// A manually-entered investment holding ("mini Wealthsimple"). The latest price
+// is fetched from a market-data provider into PriceQuote; this row only stores
+// what the user owns. Shares may be fractional. avgCostCents is the average
+// purchase price *per share* in the holding's native currency.
+model Holding {
+  id           String  @id @default(cuid())
+  symbol       String // market ticker, e.g. "SHOP.TO", "AAPL", "VFV.TO"
+  name         String? // display name, filled from the provider when known
+  shares       Float   @default(0)
+  avgCostCents Int? // average cost per share, cents (native currency)
+  currency     String  @default("CAD")
+  account      String? // e.g. "Wealthsimple TFSA"
+  sortOrder    Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Latest cached market quote per symbol (one row per ticker). Refreshed on
+// demand so page loads never block on a network call.
+model PriceQuote {
+  symbol     String   @id
+  priceCents Int // last price, cents, in `currency`
+  currency   String   @default("CAD")
+  changePct  Float? // day change %, vs previous close
+  name       String? // provider's display name
+  // Market timestamp the quote is as-of.
+  asOf       DateTime
+  fetchedAt  DateTime @default(now())
+}
+
+// Cached FX rate to the base currency, e.g. pair "USDCAD" rate 1.39. Refreshed
+// alongside quotes so pages can convert holdings without a network call.
+model FxRate {
+  pair      String   @id // "<from><to>", e.g. "USDCAD"
+  rate      Float
+  fetchedAt DateTime @default(now())
+}
+
+// Daily total portfolio value (converted to the base currency) for the
+// value-over-time chart. One row per day; upserted on each price refresh.
+model PortfolioSnapshot {
+  id         String   @id @default(cuid())
+  date       String   @unique // "YYYY-MM-DD"
+  totalCents Int
+  createdAt  DateTime @default(now())
+}
