@@ -144,9 +144,14 @@ export function parseStatementText(text: string): ParsedStatement {
   ).join("|");
 
   // <TransDate> <PostDate> [Ý/marker] <desc> <bankCategory> <amount[-]>
+  // The description is length-bounded (real merchant names are short): an
+  // unbounded lazy `.+?` here lets a hostile statement whose text is full of
+  // date-like prefixes but no category/amount trigger catastrophic regex
+  // backtracking (a ReDoS pinning the CPU). Capping it keeps each match attempt
+  // O(1) in the description, so the overall scan stays linear.
   const rowRe = new RegExp(
     `(${MONTH_ABBR})\\s+(\\d{1,2})\\s*(${MONTH_ABBR})\\s+(\\d{1,2})\\s*[ÝY]?\\s*` +
-      `(.+?)\\s*(${catAlt})\\s*(-?[\\d,]+\\.\\d{2}-?)`,
+      `(.{1,200}?)\\s*(${catAlt})\\s*(-?[\\d,]+\\.\\d{2}-?)`,
     "g",
   );
 

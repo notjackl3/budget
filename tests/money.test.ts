@@ -30,6 +30,37 @@ describe("dollarsToCents", () => {
     expect(dollarsToCents("9.005")).toBe(901);
     expect(dollarsToCents("")).toBe(0);
   });
+
+  it("collapses non-finite input to 0 (never reaches an Int column)", () => {
+    expect(dollarsToCents(Infinity)).toBe(0);
+    expect(dollarsToCents(-Infinity)).toBe(0);
+    expect(dollarsToCents(NaN)).toBe(0);
+    expect(dollarsToCents("not money")).toBe(0);
+    expect(dollarsToCents("1e500")).toBe(0); // overflows to Infinity
+  });
+
+  it("handles negatives and large values", () => {
+    expect(dollarsToCents(-42.5)).toBe(-4250);
+    expect(dollarsToCents(1_000_000)).toBe(100_000_000);
+  });
+
+  it("tolerates thousands separators", () => {
+    expect(dollarsToCents("2,816.66")).toBe(281666);
+    expect(dollarsToCents("1,000,000")).toBe(100_000_000);
+  });
+});
+
+describe("parseAmountToCents edge cases", () => {
+  it("returns 0 for unparseable input", () => {
+    expect(parseAmountToCents("")).toBe(0);
+    expect(parseAmountToCents("   ")).toBe(0);
+    expect(parseAmountToCents("abc")).toBe(0);
+  });
+
+  it("ignores currency symbols and whitespace", () => {
+    expect(parseAmountToCents(" $1,234.56 ")).toBe(123456);
+    expect(parseAmountToCents("C$10.00")).toBe(1000);
+  });
 });
 
 describe("centsToDecimalString", () => {

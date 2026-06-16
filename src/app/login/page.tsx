@@ -39,7 +39,9 @@ export default async function LoginPage({
           </div>
           {error && (
             <p className="text-sm text-destructive">
-              Incorrect password. Please try again.
+              {error === "rate"
+                ? "Too many attempts. Please wait a few minutes and try again."
+                : "Incorrect password. Please try again."}
             </p>
           )}
           <Button type="submit" className="w-full">

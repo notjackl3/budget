@@ -12,6 +12,13 @@ import { centsToDecimalString } from "@/lib/money";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
+// Upload guardrails — bound work per request so a malformed or hostile upload
+// can't exhaust memory/CPU. A text-based CIBC statement is well under 10 MB.
+const MAX_FILES = 24;
+const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB per file
+const MAX_TOTAL_BYTES = 60 * 1024 * 1024; // 60 MB per request
+const PDF_MAGIC = "%PDF-"; // every PDF starts with this signature
+
 export interface PreviewRow {
   date: string;
   description: string;
@@ -45,6 +52,28 @@ export async function POST(req: Request) {
   if (files.length === 0) {
     return NextResponse.json({ error: "No PDF files uploaded." }, { status: 400 });
   }
+  if (files.length > MAX_FILES) {
+    return NextResponse.json(
+      { error: `Too many files at once (max ${MAX_FILES}).` },
+      { status: 413 },
+    );
+  }
+  let totalBytes = 0;
+  for (const file of files) {
+    totalBytes += file.size;
+    if (file.size > MAX_FILE_BYTES) {
+      return NextResponse.json(
+        { error: `"${file.name}" is too large (max 10 MB per file).` },
+        { status: 413 },
+      );
+    }
+  }
+  if (totalBytes > MAX_TOTAL_BYTES) {
+    return NextResponse.json(
+      { error: "Upload is too large (max 60 MB total)." },
+      { status: 413 },
+    );
+  }
 
   const categories = await prisma.category.findMany({
     where: { archived: false },
@@ -75,6 +104,9 @@ export async function POST(req: Request) {
     let parsed;
     try {
       const buf = Buffer.from(await file.arrayBuffer());
+      if (!buf.subarray(0, PDF_MAGIC.length).toString("latin1").startsWith(PDF_MAGIC)) {
+        throw new Error("not a PDF file");
+      }
       parsed = await parseStatementPdf(buf);
     } catch (err) {
       return NextResponse.json(

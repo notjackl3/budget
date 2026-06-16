@@ -2,7 +2,9 @@
 
 import { revalidatePath, revalidateTag } from "next/cache";
 import { redirect } from "next/navigation";
+import { headers } from "next/headers";
 import { prisma } from "@/lib/prisma";
+import { createRateLimiter } from "@/lib/rate-limit";
 import { dollarsToCents } from "@/lib/money";
 import { ymdToDate, dateToYMD } from "@/lib/dates";
 import { makeDedupeHash } from "@/lib/parse-statement";
@@ -18,7 +20,12 @@ import {
 import type { SymbolMatch } from "@/lib/investments";
 import { toBaseCents, computeReturnStats } from "@/lib/investments";
 import { TAG } from "@/lib/cache-tags";
-import { setSession, clearSession, checkPassword } from "@/lib/auth";
+import {
+  setSession,
+  clearSession,
+  checkPassword,
+  assertAuthenticated,
+} from "@/lib/auth";
 
 /**
  * Bust the given Data Cache tags and refresh the rendered tree. `revalidateTag`
@@ -38,14 +45,33 @@ function revalidateAll() {
 
 // ---------------------------------------------------------------- Auth
 
+// Throttle password guesses: at most 10 attempts per IP per 15 minutes. The
+// limiter lives at module scope so it persists across requests on a warm
+// instance (best-effort on serverless — see lib/rate-limit.ts).
+const loginLimiter = createRateLimiter({ max: 10, windowMs: 15 * 60_000 });
+
+/** Sanitize the post-login redirect target to a same-origin path, rejecting
+ * absolute and protocol-relative (`//host`, `/\\host`) URLs (open-redirect). */
+function safeFrom(from: string): string {
+  return /^\/(?!\/|\\)/.test(from) ? from : "/";
+}
+
 export async function loginAction(formData: FormData) {
   const password = String(formData.get("password") ?? "");
-  const from = String(formData.get("from") ?? "/");
+  const from = safeFrom(String(formData.get("from") ?? "/"));
+
+  const ip =
+    (await headers()).get("x-forwarded-for")?.split(",")[0].trim() || "local";
+  if (!loginLimiter.hit(ip, Date.now()).allowed) {
+    redirect(`/login?error=rate&from=${encodeURIComponent(from)}`);
+  }
+
   if (!checkPassword(password)) {
     redirect(`/login?error=1&from=${encodeURIComponent(from)}`);
   }
+  loginLimiter.reset(ip);
   await setSession();
-  redirect(from && from.startsWith("/") ? from : "/");
+  redirect(from);
 }
 
 export async function logoutAction() {
@@ -90,6 +116,7 @@ function cleanId(v: unknown): string | null {
 }
 
 export async function createExpense(input: ExpenseInput) {
+  await assertAuthenticated();
   const amountCents = dollarsToCents(input.amount);
   const description = input.description.trim();
   if (!description) throw new Error("Description is required.");
@@ -114,6 +141,7 @@ export async function createExpense(input: ExpenseInput) {
 }
 
 export async function updateExpense(id: string, input: Partial<ExpenseInput>) {
+  await assertAuthenticated();
   const data: Record<string, unknown> = {};
   if (input.description !== undefined) data.description = input.description.trim();
   if (input.date !== undefined) data.date = ymdToDate(input.date);
@@ -163,6 +191,7 @@ export async function updateExpense(id: string, input: Partial<ExpenseInput>) {
 }
 
 export async function deleteExpense(id: string) {
+  await assertAuthenticated();
   await prisma.expense.delete({ where: { id } });
   revalidateAll();
 }
@@ -174,6 +203,7 @@ export async function deleteExpense(id: string) {
  * actually a credit and the target is a real spending row, to keep the data sane.
  */
 export async function linkRefund(refundId: string, expenseId: string | null) {
+  await assertAuthenticated();
   if (expenseId) {
     if (expenseId === refundId) throw new Error("Can't link a row to itself.");
     const [refund, target] = await Promise.all([
@@ -198,6 +228,7 @@ export type BulkAction =
   | { type: "delete" };
 
 export async function bulkExpenseAction(ids: string[], action: BulkAction) {
+  await assertAuthenticated();
   if (ids.length === 0) return;
   if (action.type === "delete") {
     await prisma.expense.deleteMany({ where: { id: { in: ids } } });
@@ -233,6 +264,7 @@ export async function bulkReviewExpenses(
     date?: string;
   }[],
 ) {
+  await assertAuthenticated();
   if (items.length === 0) return;
   // Rows whose description/date changed need their dedupe hash recomputed, which
   // requires the current row (for the unchanged half + the amount). Fetch those
@@ -284,6 +316,7 @@ export async function bulkReviewExpenses(
 // --------------------------------------------------------- Reflections
 
 export async function saveReflection(month: string, reflection: string) {
+  await assertAuthenticated();
   await prisma.monthlyReflection.upsert({
     where: { month },
     update: { reflection },
@@ -299,6 +332,7 @@ export async function updateSettings(input: {
   currencySymbol: string;
   mealNeedCents?: number;
 }) {
+  await assertAuthenticated();
   const data = {
     currencyCode: input.currencyCode,
     currencySymbol: input.currencySymbol,
@@ -317,6 +351,7 @@ export async function updateSettings(input: {
 // ------------------------------------------------ Categories / methods
 
 export async function createCategory(name: string, color: string) {
+  await assertAuthenticated();
   const slug =
     name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") ||
     `cat-${Date.now()}`;
@@ -331,11 +366,13 @@ export async function updateCategory(
   id: string,
   data: { name?: string; color?: string },
 ) {
+  await assertAuthenticated();
   await prisma.category.update({ where: { id }, data });
   revalidateAll();
 }
 
 export async function archiveCategory(id: string) {
+  await assertAuthenticated();
   await prisma.category.update({ where: { id }, data: { archived: true } });
   revalidateAll();
 }
@@ -359,6 +396,7 @@ export async function commitImport(input: {
   periodEnd: string | null;
   rows: ImportRowInput[];
 }) {
+  await assertAuthenticated();
   if (input.rows.length === 0) return { created: 0, statementId: null };
 
   const statement = await prisma.statement.create({
@@ -396,7 +434,8 @@ export async function commitImport(input: {
 export interface JobInput {
   name: string;
   employer?: string | null;
-  pay: string | number; // dollars, at the chosen cadence
+  pay: string | number; // net / take-home dollars, at the chosen cadence
+  gross?: string | number | null; // optional gross dollars at the same cadence
   cadence: string;
   hoursPerWeek?: string | number | null;
   active?: boolean;
@@ -416,8 +455,16 @@ function cleanHours(v: unknown): number | null {
 function cleanDate(v: unknown): Date | null {
   return typeof v === "string" && v !== "" ? ymdToDate(v) : null;
 }
+/** Parse an optional gross amount: blank/null/non-positive means "unset" (null). */
+function cleanGross(v: unknown): number | null {
+  if (v === null || v === undefined || v === "") return null;
+  if (typeof v !== "string" && typeof v !== "number") return null;
+  const cents = dollarsToCents(v);
+  return cents > 0 ? cents : null;
+}
 
 export async function createJob(input: JobInput) {
+  await assertAuthenticated();
   const name = input.name.trim();
   if (!name) throw new Error("Job name is required.");
   const max = await prisma.job.aggregate({ _max: { sortOrder: true } });
@@ -426,6 +473,7 @@ export async function createJob(input: JobInput) {
       name,
       employer: input.employer?.trim() || null,
       payCents: Math.max(0, dollarsToCents(input.pay)),
+      grossCents: cleanGross(input.gross),
       cadence: cleanCadence(input.cadence),
       hoursPerWeek: cleanHours(input.hoursPerWeek),
       startDate: cleanDate(input.startDate),
@@ -438,11 +486,13 @@ export async function createJob(input: JobInput) {
 }
 
 export async function updateJob(id: string, input: Partial<JobInput>) {
+  await assertAuthenticated();
   const data: Record<string, unknown> = {};
   if (input.name !== undefined) data.name = input.name.trim();
   if (input.employer !== undefined)
     data.employer = input.employer?.trim() || null;
   if (input.pay !== undefined) data.payCents = Math.max(0, dollarsToCents(input.pay));
+  if (input.gross !== undefined) data.grossCents = cleanGross(input.gross);
   if (input.cadence !== undefined) data.cadence = cleanCadence(input.cadence);
   if (input.hoursPerWeek !== undefined)
     data.hoursPerWeek = cleanHours(input.hoursPerWeek);
@@ -454,6 +504,7 @@ export async function updateJob(id: string, input: Partial<JobInput>) {
 }
 
 export async function deleteJob(id: string) {
+  await assertAuthenticated();
   await prisma.job.delete({ where: { id } });
   bust(TAG.jobs);
 }
@@ -487,6 +538,7 @@ function cleanAvgCost(v: unknown): number | null {
 }
 
 export async function createHolding(input: HoldingInputDTO) {
+  await assertAuthenticated();
   const symbol = cleanSymbol(input.symbol);
   if (!symbol) throw new Error("A ticker symbol is required.");
   const max = await prisma.holding.aggregate({ _max: { sortOrder: true } });
@@ -508,6 +560,7 @@ export async function updateHolding(
   id: string,
   input: Partial<HoldingInputDTO>,
 ) {
+  await assertAuthenticated();
   const data: Record<string, unknown> = {};
   if (input.symbol !== undefined) data.symbol = cleanSymbol(input.symbol);
   if (input.name !== undefined) data.name = input.name?.trim() || null;
@@ -520,12 +573,14 @@ export async function updateHolding(
 }
 
 export async function deleteHolding(id: string) {
+  await assertAuthenticated();
   await prisma.holding.delete({ where: { id } });
   bust(TAG.holdings);
 }
 
 /** Ticker autocomplete: search the market for symbols matching free text. */
 export async function searchSymbols(query: string): Promise<SymbolMatch[]> {
+  await assertAuthenticated();
   return searchSymbolsMarket(query);
 }
 
@@ -557,6 +612,7 @@ export async function saveBudgetPlan(input: {
   // null clears the override (projection follows the Investment bucket again).
   investContribCents?: number | null;
 }) {
+  await assertAuthenticated();
   await ensurePlan();
   const data: Record<string, unknown> = {};
   if (input.horizonYears !== undefined)
@@ -576,6 +632,7 @@ export async function setBucket(
   key: string,
   input: { amountCents?: number; locked?: boolean },
 ) {
+  await assertAuthenticated();
   const planId = await ensurePlan();
   const amountCents =
     input.amountCents !== undefined
@@ -605,6 +662,7 @@ export async function setBucket(
 export async function setBuckets(
   buckets: { key: string; amountCents: number; locked: boolean }[],
 ) {
+  await assertAuthenticated();
   const planId = await ensurePlan();
   await prisma.$transaction(
     buckets.map((b) =>
@@ -630,6 +688,7 @@ export async function setBuckets(
 export async function setInvestmentAllocations(
   allocations: { symbol: string; percent: number }[],
 ) {
+  await assertAuthenticated();
   const planId = await ensurePlan();
   const clean = allocations
     .map((a) => ({
@@ -659,6 +718,7 @@ export async function refreshReturnStats(): Promise<{
   updated: number;
   failed: number;
 }> {
+  await assertAuthenticated();
   const holdings = await prisma.holding.findMany({ select: { symbol: true } });
   const symbols = [...new Set(holdings.map((h) => h.symbol))];
   if (symbols.length === 0) return { updated: 0, failed: 0 };
@@ -702,6 +762,7 @@ export async function refreshQuotes(): Promise<{
   updated: number;
   failed: number;
 }> {
+  await assertAuthenticated();
   const holdings = await prisma.holding.findMany();
   if (holdings.length === 0) return { updated: 0, failed: 0 };
 

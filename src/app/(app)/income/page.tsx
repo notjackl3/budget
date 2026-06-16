@@ -10,6 +10,7 @@ export default async function IncomePage() {
     name: j.name,
     employer: j.employer,
     payCents: j.payCents,
+    grossCents: j.grossCents,
     cadence: j.cadence,
     hoursPerWeek: j.hoursPerWeek,
     startDate: j.startDate ? dateToYMD(j.startDate) : null,
@@ -31,6 +32,10 @@ export default async function IncomePage() {
         jobs={dtos}
         monthlyCents={totals.monthlyCents}
         annualCents={totals.annualCents}
+        grossMonthlyCents={totals.grossMonthlyCents}
+        grossAnnualCents={totals.grossAnnualCents}
+        taxMonthlyCents={totals.taxMonthlyCents}
+        taxAnnualCents={totals.taxAnnualCents}
       />
     </div>
   );

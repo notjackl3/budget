@@ -165,8 +165,13 @@ model Job {
   id           String  @id @default(cuid())
   name         String
   employer     String?
-  // Pay amount in cents, interpreted at `cadence`.
+  // Pay amount in cents, interpreted at `cadence`. This is the NET (take-home)
+  // figure that feeds every income total, projection, and dashboard number.
   payCents     Int     @default(0)
+  // Optional GROSS (pre-tax) amount in cents at the same `cadence`. When set,
+  // tax withheld = grossCents - payCents (derived, not stored). Null = the user
+  // only tracks take-home for this job, so no tax is known.
+  grossCents   Int?
   // "hourly" | "weekly" | "biweekly" | "semimonthly" | "monthly" | "annual"
   cadence      String  @default("monthly")
   // Hours/week, used only to annualize an hourly cadence.

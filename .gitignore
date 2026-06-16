@@ -21,3 +21,6 @@ prisma/*.db.bak
 # personal financial data (real bank statements & fixtures)
 /statements
 /tests/fixtures
+
+# typescript incremental build info
+tsconfig.tsbuildinfo

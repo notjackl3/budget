@@ -54,10 +54,33 @@ export function monthNameToIndex(name: string): number {
 }
 
 /**
- * Convert a "YYYY-MM-DD" string to a Date at local noon. Noon avoids the
- * calendar day shifting under DST/timezone conversions.
+ * Whether `ymd` is a real calendar date in strict "YYYY-MM-DD" form. Rejects
+ * malformed strings and overflow dates (e.g. "2026-02-30") that JS would
+ * silently roll forward.
+ */
+export function isValidYmd(ymd: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd);
+  if (!match) return false;
+  const y = Number(match[1]);
+  const mo = Number(match[2]);
+  const d = Number(match[3]);
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return false;
+  const dt = new Date(y, mo - 1, d, 12, 0, 0, 0);
+  return (
+    dt.getFullYear() === y && dt.getMonth() === mo - 1 && dt.getDate() === d
+  );
+}
+
+/**
+ * Convert a strict "YYYY-MM-DD" string to a Date at local noon. Noon avoids the
+ * calendar day shifting under DST/timezone conversions. Throws on a malformed
+ * or impossible date so bad input can never be persisted (the single
+ * validation chokepoint for every write path).
  */
 export function ymdToDate(ymd: string): Date {
+  if (!isValidYmd(ymd)) {
+    throw new Error(`Invalid date "${ymd}". Expected YYYY-MM-DD.`);
+  }
   const [y, m, d] = ymd.split("-").map(Number);
   return new Date(y, m - 1, d, 12, 0, 0, 0);
 }

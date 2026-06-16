@@ -6,14 +6,20 @@ export function parseAmountToCents(raw: string): number {
   const negative = /^-/.test(trimmed) || /-$/.test(trimmed);
   const digits = trimmed.replace(/[^0-9.]/g, "");
   const value = Math.round(parseFloat(digits) * 100);
-  if (Number.isNaN(value)) return 0;
+  if (!Number.isFinite(value)) return 0;
   return negative ? -value : value;
 }
 
-/** Convert dollars (number or numeric string) to integer cents. */
+/** Convert dollars (number or numeric string) to integer cents. Non-finite
+ * input (NaN/Infinity) collapses to 0 so it can never reach an Int column. */
 export function dollarsToCents(dollars: number | string): number {
-  const n = typeof dollars === "string" ? parseFloat(dollars) : dollars;
-  if (Number.isNaN(n)) return 0;
+  // Strip thousands separators so "2,816.66" parses as 2816.66 rather than
+  // collapsing to 2 (parseFloat stops at the comma).
+  const n =
+    typeof dollars === "string"
+      ? parseFloat(dollars.replace(/,/g, ""))
+      : dollars;
+  if (!Number.isFinite(n)) return 0;
   return Math.round(n * 100);
 }
 

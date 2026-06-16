@@ -24,9 +24,11 @@ export function cadenceLabel(value: string): string {
 }
 
 export interface IncomeJob {
-  payCents: number;
+  payCents: number; // net / take-home at `cadence`
   cadence: string;
   hoursPerWeek?: number | null;
+  // Optional gross (pre-tax) at `cadence`. Null/undefined = take-home only.
+  grossCents?: number | null;
   active?: boolean;
   // Active window, "YYYY-MM-DD" (or null). startDate null = always-on from the
   // beginning; endDate null = still ongoing.
@@ -42,41 +44,70 @@ const PERIODS_PER_YEAR: Record<Exclude<Cadence, "hourly" | "annual">, number> = 
   monthly: 12,
 };
 
-/** Annualized income for a single job, in cents. */
-export function annualIncomeCents(job: IncomeJob): number {
-  const pay = Number.isFinite(job.payCents) ? job.payCents : 0;
-  switch (job.cadence) {
+/** Annualize a per-cadence cents amount (net, gross, or tax all use this). */
+export function annualizeCents(
+  amountCents: number,
+  cadence: string,
+  hoursPerWeek?: number | null,
+): number {
+  const amt = Number.isFinite(amountCents) ? amountCents : 0;
+  switch (cadence) {
     case "hourly":
       // hours/week * 52 weeks
-      return Math.round(pay * (job.hoursPerWeek ?? 0) * 52);
+      return Math.round(amt * (hoursPerWeek ?? 0) * 52);
     case "annual":
-      return pay;
+      return amt;
     case "weekly":
     case "biweekly":
     case "semimonthly":
     case "monthly":
-      return pay * PERIODS_PER_YEAR[job.cadence];
+      return amt * PERIODS_PER_YEAR[cadence];
     default:
       return 0;
   }
 }
 
-/** Monthly income for a single job, in cents (annual / 12). */
+/** Annualized take-home income for a single job, in cents. */
+export function annualIncomeCents(job: IncomeJob): number {
+  return annualizeCents(job.payCents, job.cadence, job.hoursPerWeek);
+}
+
+/** Monthly take-home income for a single job, in cents (annual / 12). */
 export function monthlyIncomeCents(job: IncomeJob): number {
   return Math.round(annualIncomeCents(job) / 12);
 }
 
-/** Totals across jobs. Only `active` jobs count toward the totals. */
+/**
+ * Totals across jobs. Only `active` jobs count. `*Cents` (unqualified) are the
+ * net take-home figures every other page relies on; `gross*` and `tax*` are
+ * derived from jobs that carry a gross amount (jobs with no gross contribute
+ * gross = net, i.e. zero tax).
+ */
 export function incomeTotals(jobs: IncomeJob[]): {
   monthlyCents: number;
   annualCents: number;
+  grossMonthlyCents: number;
+  grossAnnualCents: number;
+  taxMonthlyCents: number;
+  taxAnnualCents: number;
 } {
   let annualCents = 0;
+  let grossAnnualCents = 0;
   for (const j of jobs) {
     if (j.active === false) continue;
     annualCents += annualIncomeCents(j);
+    const grossPer = j.grossCents != null ? j.grossCents : j.payCents;
+    grossAnnualCents += annualizeCents(grossPer, j.cadence, j.hoursPerWeek);
   }
-  return { monthlyCents: Math.round(annualCents / 12), annualCents };
+  const taxAnnualCents = grossAnnualCents - annualCents;
+  return {
+    monthlyCents: Math.round(annualCents / 12),
+    annualCents,
+    grossMonthlyCents: Math.round(grossAnnualCents / 12),
+    grossAnnualCents,
+    taxMonthlyCents: Math.round(taxAnnualCents / 12),
+    taxAnnualCents,
+  };
 }
 
 /**
