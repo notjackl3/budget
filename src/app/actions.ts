@@ -66,6 +66,14 @@ export async function loginAction(formData: FormData) {
     redirect(`/login?error=rate&from=${encodeURIComponent(from)}`);
   }
 
+  // TEMP DEBUG — remove after diagnosing prod login. Logs to Vercel runtime logs.
+  console.log("[login-debug]", {
+    appPasswordSet: !!process.env.APP_PASSWORD,
+    appPasswordLen: process.env.APP_PASSWORD?.length ?? 0,
+    typedLen: password.length,
+    matches: checkPassword(password),
+  });
+
   if (!checkPassword(password)) {
     redirect(`/login?error=1&from=${encodeURIComponent(from)}`);
   }
