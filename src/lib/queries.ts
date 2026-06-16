@@ -32,6 +32,13 @@ function offsetExpenseIds(
 // DB — categories/methods/settings (fetched in the layout on *every* page) in
 // particular no longer re-query on each navigation. Mutations in `actions.ts`
 // call `revalidateTag(...)` to bust the relevant entries.
+//
+// Hard ceiling on cache staleness. Mutations through the app bust the cache
+// immediately via `revalidateTag` — this window only matters for changes made
+// OUTSIDE the running process (e.g. editing a row in local dev while prod is
+// also running; both environments share the same Turso database). 60s keeps
+// cross-environment edits visible quickly without re-querying on every nav.
+const STALE_AFTER_SECONDS = 60;
 
 export const getExpenses = unstable_cache(
   async (): Promise<ExpenseDTO[]> => {
@@ -43,7 +50,7 @@ export const getExpenses = unstable_cache(
     return rows.map((e) => toExpenseDTO(e, offset.has(e.id)));
   },
   ["expenses-list"],
-  { tags: [TAG.expenses] },
+  { tags: [TAG.expenses], revalidate: STALE_AFTER_SECONDS },
 );
 
 /** Unreviewed expenses, for the weekly review. */
@@ -58,7 +65,7 @@ export const getUnreviewedExpenses = unstable_cache(
     return rows.map((e) => toExpenseDTO(e, offset.has(e.id)));
   },
   ["expenses-unreviewed"],
-  { tags: [TAG.expenses] },
+  { tags: [TAG.expenses], revalidate: STALE_AFTER_SECONDS },
 );
 
 // Cache the DB read with JSON-safe ISO date strings (don't trust the Data Cache
@@ -90,7 +97,7 @@ const getAggRows = unstable_cache(
     }));
   },
   ["expenses-agg"],
-  { tags: [TAG.expenses] },
+  { tags: [TAG.expenses], revalidate: STALE_AFTER_SECONDS },
 );
 
 /** Aggregation-ready records (Date objects) for the dashboard/summaries. */
@@ -106,7 +113,7 @@ export const getCategories = unstable_cache(
       orderBy: { sortOrder: "asc" },
     }),
   ["categories-list"],
-  { tags: [TAG.categories] },
+  { tags: [TAG.categories], revalidate: STALE_AFTER_SECONDS },
 );
 
 // Settings is a singleton row read in the layout on every navigation; cache the
@@ -115,7 +122,7 @@ export const getCategories = unstable_cache(
 const getSettingsCached = unstable_cache(
   async () => prisma.settings.findUnique({ where: { id: "singleton" } }),
   ["settings-singleton"],
-  { tags: [TAG.settings] },
+  { tags: [TAG.settings], revalidate: STALE_AFTER_SECONDS },
 );
 
 export async function getSettings() {
@@ -131,7 +138,7 @@ export async function getReflection(month: string) {
 export const getAllReflections = unstable_cache(
   async () => prisma.monthlyReflection.findMany(),
   ["reflections-list"],
-  { tags: [TAG.reflections] },
+  { tags: [TAG.reflections], revalidate: STALE_AFTER_SECONDS },
 );
 
 export const getStatements = unstable_cache(
@@ -141,7 +148,7 @@ export const getStatements = unstable_cache(
       include: { _count: { select: { expenses: true } } },
     }),
   ["statements-list"],
-  { tags: [TAG.statements] },
+  { tags: [TAG.statements], revalidate: STALE_AFTER_SECONDS },
 );
 
 /** Existing dedupe hashes, for duplicate detection during import. */
@@ -155,7 +162,7 @@ export async function getExistingHashes(): Promise<Set<string>> {
 export const getJobs = unstable_cache(
   async () => prisma.job.findMany({ orderBy: { sortOrder: "asc" } }),
   ["jobs-list"],
-  { tags: [TAG.jobs] },
+  { tags: [TAG.jobs], revalidate: STALE_AFTER_SECONDS },
 );
 
 // --------------------------------------------------------------- Investments
@@ -163,25 +170,25 @@ export const getJobs = unstable_cache(
 export const getHoldings = unstable_cache(
   async () => prisma.holding.findMany({ orderBy: { sortOrder: "asc" } }),
   ["holdings-list"],
-  { tags: [TAG.holdings] },
+  { tags: [TAG.holdings], revalidate: STALE_AFTER_SECONDS },
 );
 
 export const getQuotes = unstable_cache(
   async () => prisma.priceQuote.findMany(),
   ["quotes-list"],
-  { tags: [TAG.quotes] },
+  { tags: [TAG.quotes], revalidate: STALE_AFTER_SECONDS },
 );
 
 export const getFxRates = unstable_cache(
   async () => prisma.fxRate.findMany(),
   ["fx-rates"],
-  { tags: [TAG.quotes] },
+  { tags: [TAG.quotes], revalidate: STALE_AFTER_SECONDS },
 );
 
 export const getPortfolioSnapshots = unstable_cache(
   async () => prisma.portfolioSnapshot.findMany({ orderBy: { date: "asc" } }),
   ["snapshots-list"],
-  { tags: [TAG.snapshots] },
+  { tags: [TAG.snapshots], revalidate: STALE_AFTER_SECONDS },
 );
 
 // --------------------------------------------------------------- Projection
@@ -195,7 +202,7 @@ const getBudgetPlanCached = unstable_cache(
       include: { buckets: true, allocations: true },
     }),
   ["budget-plan"],
-  { tags: [TAG.plan] },
+  { tags: [TAG.plan], revalidate: STALE_AFTER_SECONDS },
 );
 
 export async function getBudgetPlan() {
@@ -217,7 +224,7 @@ export async function getBudgetPlan() {
 export const getReturnStats = unstable_cache(
   async () => prisma.returnStat.findMany(),
   ["return-stats-list"],
-  { tags: [TAG.returnStats] },
+  { tags: [TAG.returnStats], revalidate: STALE_AFTER_SECONDS },
 );
 
 export { ymdToDate };

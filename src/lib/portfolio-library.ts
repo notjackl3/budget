@@ -361,6 +361,33 @@ export const PROFILES: PortfolioProfile[] = [
   },
 ];
 
+// ---- The user's own portfolio ---------------------------------------------
+// Unlike the hardcoded PROFILES (which blend across asset classes with fixed
+// long-run estimates), this is built live from the real holdings on the
+// Investments page: each holding's current market-value weight plus its own
+// fetched price history (ReturnStat). It lets the library answer "what if I
+// just keep my current distribution?" using my actual tickers, not archetypes.
+
+export interface CustomHoldingStat {
+  symbol: string;
+  name: string | null;
+  /** Current market-value weight in the portfolio, 0..100. */
+  percent: number;
+  /** Historical return/vol for this symbol, or null if not fetched yet. */
+  stats: ReturnStats | null;
+}
+
+export interface CustomPortfolio {
+  holdings: CustomHoldingStat[];
+  /** Total portfolio market value (base currency cents) — the default lump sum. */
+  totalValueCents: number;
+  /** Whether at least one holding has historical stats to project from. */
+  hasStats: boolean;
+}
+
+/** Sentinel id used to select the live "My Portfolio" view in the library. */
+export const CUSTOM_PROFILE_ID = "__custom__";
+
 /**
  * Blend a profile's allocation into a single portfolio expectation. Weights each
  * asset class's hardcoded CAGR/vol by its percentage (normalized to sum 1).

@@ -1,10 +1,12 @@
 "use client";
 
 import * as React from "react";
-import { TrendingUp, Sparkles, Info } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { TrendingUp, Sparkles, Info, Wallet, RefreshCw } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -12,16 +14,21 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useToast } from "@/components/ui/toast";
 import { useMoney } from "@/components/currency-provider";
 import { ProjectionChart } from "@/components/charts/projection-chart";
-import { projectScenarios, scenarioReturns, type ScenarioKey } from "@/lib/projection";
+import { projectScenarios, scenarioReturns, blendReturn, type ScenarioKey } from "@/lib/projection";
 import {
   PROFILES,
   ASSET_CLASS_BY_ID,
   blendProfile,
+  CUSTOM_PROFILE_ID,
   type Region,
   type PortfolioProfile,
+  type CustomPortfolio,
 } from "@/lib/portfolio-library";
+import type { ReturnStats } from "@/lib/investments";
+import { refreshReturnStats } from "@/app/actions";
 import { dollarsToCents } from "@/lib/money";
 import { cn } from "@/lib/utils";
 
@@ -45,6 +52,12 @@ const RISK_STYLES: Record<string, string> = {
   high: "bg-red-500/10 text-red-600 dark:text-red-400",
 };
 
+// Distinct dots for the live holdings list (asset classes have their own colors).
+const CUSTOM_COLORS = [
+  "#2563eb", "#7c3aed", "#0d9488", "#ea580c", "#dc2626",
+  "#16a34a", "#ca8a04", "#9333ea", "#0ea5e9", "#64748b",
+];
+
 function fmtPct(n: number): string {
   const sign = n > 0 ? "+" : "";
   return `${sign}${(n * 100).toFixed(1)}%`;
@@ -57,13 +70,22 @@ function toMonthlyCents(amountCents: number, cadence: Cadence): number {
   return amountCents;
 }
 
-export function PortfolioLibraryView({ base }: { base: string }) {
+export function PortfolioLibraryView({
+  base,
+  customPortfolio,
+}: {
+  base: string;
+  customPortfolio: CustomPortfolio | null;
+}) {
   const money = useMoney();
+  const router = useRouter();
+  const { toast } = useToast();
 
   const [profileId, setProfileId] = React.useState(PROFILES[0].id);
   const [region, setRegion] = React.useState<Region>("ca");
   const [horizon, setHorizon] = React.useState(20);
   const [activeScenario, setActiveScenario] = React.useState<ScenarioKey>("average");
+  const [refreshing, setRefreshing] = React.useState(false);
 
   const [lumpText, setLumpText] = React.useState("10000");
   const [contribText, setContribText] = React.useState("500");
@@ -72,15 +94,29 @@ export function PortfolioLibraryView({ base }: { base: string }) {
   // Which ETF the user picked to represent each asset class (per region).
   const [picks, setPicks] = React.useState<Record<string, string>>({});
 
+  const isCustom = profileId === CUSTOM_PROFILE_ID && customPortfolio != null;
+
   const profile = React.useMemo(
     () => PROFILES.find((p) => p.id === profileId) ?? PROFILES[0],
     [profileId],
   );
 
-  const blended = React.useMemo(
-    () => blendProfile(profile.allocations),
-    [profile],
-  );
+  // Blend into a single expectation: hardcoded profiles weight asset-class
+  // estimates; the live portfolio weights each holding's fetched history.
+  const blended: ReturnStats | null = React.useMemo(() => {
+    if (isCustom && customPortfolio) {
+      const statsBySymbol = Object.fromEntries(
+        customPortfolio.holdings
+          .filter((h) => h.stats != null)
+          .map((h) => [h.symbol, h.stats!]),
+      );
+      return blendReturn(
+        customPortfolio.holdings.map((h) => ({ symbol: h.symbol, percent: h.percent })),
+        statsBySymbol,
+      );
+    }
+    return blendProfile(profile.allocations);
+  }, [isCustom, customPortfolio, profile]);
 
   const startCents = dollarsToCents(lumpText);
   const monthlyContributionCents = toMonthlyCents(dollarsToCents(contribText), cadence);
@@ -106,6 +142,34 @@ export function PortfolioLibraryView({ base }: { base: string }) {
     return picks[key] ?? list[0]?.symbol ?? "";
   }
 
+  // Select the live portfolio and prefill the starting amount with its value, so
+  // the projection starts from "what I actually hold today".
+  function selectCustom() {
+    if (!customPortfolio) return;
+    setProfileId(CUSTOM_PROFILE_ID);
+    setLumpText(String(Math.round(customPortfolio.totalValueCents / 100)));
+  }
+
+  async function loadHistory() {
+    setRefreshing(true);
+    try {
+      const res = await refreshReturnStats();
+      router.refresh();
+      toast({
+        title:
+          res.updated > 0
+            ? `Loaded history for ${res.updated} holding${res.updated === 1 ? "" : "s"}` +
+              (res.failed > 0 ? `, ${res.failed} without enough data` : "")
+            : "No historical data could be fetched",
+        variant: res.updated > 0 ? "success" : "error",
+      });
+    } catch {
+      toast({ title: "Couldn't load price history", variant: "error" });
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
   // Total invested over the horizon (lump + all contributions), for context.
   const totalInvested = startCents + monthlyContributionCents * horizon * 12;
 
@@ -116,17 +180,39 @@ export function PortfolioLibraryView({ base }: { base: string }) {
         <CardHeader>
           <CardTitle>Pick a strategy</CardTitle>
           <p className="mt-1 text-xs text-muted-foreground">
-            Each profile is a research-based mix of asset classes. Select one to see
-            how it&apos;s built and how it might grow.
+            Each profile is a research-based mix of asset classes — or start from your
+            own holdings. Select one to see how it&apos;s built and how it might grow.
           </p>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {customPortfolio && (
+              <button
+                type="button"
+                onClick={selectCustom}
+                className={cn(
+                  "rounded-lg border p-3 text-left transition-all duration-200 ease-glass",
+                  isCustom
+                    ? "glass glass-active border-primary"
+                    : "hover:-translate-y-px hover:bg-muted/40",
+                )}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-1.5 truncate text-sm font-semibold">
+                    <Wallet className="h-3.5 w-3.5 shrink-0 text-primary" />
+                    My Portfolio
+                  </span>
+                  <span className="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                    live
+                  </span>
+                </div>
+              </button>
+            )}
             {PROFILES.map((p) => (
               <ProfileButton
                 key={p.id}
                 profile={p}
-                active={p.id === profileId}
+                active={!isCustom && p.id === profileId}
                 onClick={() => setProfileId(p.id)}
               />
             ))}
@@ -139,97 +225,167 @@ export function PortfolioLibraryView({ base }: { base: string }) {
         <CardHeader className="flex-row items-start justify-between gap-3 space-y-0">
           <div className="min-w-0">
             <CardTitle className="flex items-center gap-2">
-              {profile.name}
-              <span
-                className={cn(
-                  "rounded-full px-2 py-0.5 text-[11px] font-medium capitalize",
-                  RISK_STYLES[profile.risk],
-                )}
-              >
-                {profile.risk} risk
-              </span>
+              {isCustom ? "My Portfolio" : profile.name}
+              {!isCustom && (
+                <span
+                  className={cn(
+                    "rounded-full px-2 py-0.5 text-[11px] font-medium capitalize",
+                    RISK_STYLES[profile.risk],
+                  )}
+                >
+                  {profile.risk} risk
+                </span>
+              )}
             </CardTitle>
-            <p className="mt-1 text-sm text-muted-foreground">{profile.description}</p>
-            <p className="mt-1 text-xs text-muted-foreground">{profile.suits}</p>
+            {isCustom ? (
+              <p className="mt-1 text-sm text-muted-foreground">
+                Your actual holdings at their current weights, projected forward as if
+                you keep this distribution. Each return is that ticker&apos;s own price
+                history.
+              </p>
+            ) : (
+              <>
+                <p className="mt-1 text-sm text-muted-foreground">{profile.description}</p>
+                <p className="mt-1 text-xs text-muted-foreground">{profile.suits}</p>
+              </>
+            )}
           </div>
-          {/* Region toggle */}
-          <div className="flex shrink-0 overflow-hidden rounded-lg border text-xs">
-            {(["ca", "us"] as Region[]).map((r) => (
-              <button
-                key={r}
-                type="button"
-                onClick={() => setRegion(r)}
-                className={cn(
-                  "px-2.5 py-1 font-medium transition-colors",
-                  region === r
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                {r === "ca" ? "🇨🇦 Canada" : "🇺🇸 US"}
-              </button>
-            ))}
-          </div>
+          {/* Region toggle — only meaningful for the hardcoded ETF picks. */}
+          {!isCustom && (
+            <div className="flex shrink-0 overflow-hidden rounded-lg border text-xs">
+              {(["ca", "us"] as Region[]).map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  onClick={() => setRegion(r)}
+                  className={cn(
+                    "px-2.5 py-1 font-medium transition-colors",
+                    region === r
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {r === "ca" ? "🇨🇦 Canada" : "🇺🇸 US"}
+                </button>
+              ))}
+            </div>
+          )}
         </CardHeader>
         <CardContent className="space-y-2">
-          {[...profile.allocations]
-            .sort((a, b) => b.percent - a.percent)
-            .map((a) => {
-              const cls = ASSET_CLASS_BY_ID[a.classId];
-              const list = region === "ca" ? cls.caEtfs : cls.usEtfs;
-              return (
-                <div key={a.classId} className="flex items-center gap-3">
-                  <span
-                    className="h-2.5 w-2.5 shrink-0 rounded-full"
-                    style={{ background: cls.color }}
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-baseline justify-between gap-2">
-                      <span className="truncate text-sm font-medium">{cls.label}</span>
-                      <span className="tabular shrink-0 text-sm text-muted-foreground">
-                        {a.percent}%
-                      </span>
+          {isCustom && customPortfolio
+            ? customPortfolio.holdings.map((h, i) => {
+                const color = CUSTOM_COLORS[i % CUSTOM_COLORS.length];
+                return (
+                  <div key={h.symbol} className="flex items-center gap-3">
+                    <span
+                      className="h-2.5 w-2.5 shrink-0 rounded-full"
+                      style={{ background: color }}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span className="truncate text-sm font-medium">
+                          {h.symbol}
+                          {h.name && (
+                            <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+                              {h.name}
+                            </span>
+                          )}
+                        </span>
+                        <span className="tabular shrink-0 text-sm text-muted-foreground">
+                          {h.percent.toFixed(1)}%
+                        </span>
+                      </div>
+                      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted">
+                        <div
+                          className="h-full rounded-full"
+                          style={{ width: `${h.percent}%`, background: color }}
+                        />
+                      </div>
+                      <p className="mt-0.5 text-[11px] text-muted-foreground">
+                        {h.stats
+                          ? `${fmtPct(h.stats.annualReturn)}/yr · ±${(h.stats.annualVol * 100).toFixed(0)}% vol (historical)`
+                          : "price history not loaded yet"}
+                      </p>
                     </div>
-                    {/* percent bar */}
-                    <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted">
-                      <div
-                        className="h-full rounded-full"
-                        style={{ width: `${a.percent}%`, background: cls.color }}
-                      />
-                    </div>
-                    <p className="mt-0.5 text-[11px] text-muted-foreground">
-                      {fmtPct(cls.cagr)}/yr · ±{(cls.vol * 100).toFixed(0)}% vol
-                    </p>
                   </div>
-                  {/* ETF dropdown */}
-                  <Select
-                    value={etfFor(a.classId)}
-                    onValueChange={(v) =>
-                      setPicks((prev) => ({ ...prev, [`${a.classId}:${region}`]: v }))
-                    }
-                  >
-                    <SelectTrigger className="h-8 w-32 shrink-0">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {list.map((e) => (
-                        <SelectItem key={e.symbol} value={e.symbol}>
-                          <span className="font-medium">{e.symbol}</span>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              );
-            })}
+                );
+              })
+            : [...profile.allocations]
+                .sort((a, b) => b.percent - a.percent)
+                .map((a) => {
+                  const cls = ASSET_CLASS_BY_ID[a.classId];
+                  const list = region === "ca" ? cls.caEtfs : cls.usEtfs;
+                  return (
+                    <div key={a.classId} className="flex items-center gap-3">
+                      <span
+                        className="h-2.5 w-2.5 shrink-0 rounded-full"
+                        style={{ background: cls.color }}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-baseline justify-between gap-2">
+                          <span className="truncate text-sm font-medium">{cls.label}</span>
+                          <span className="tabular shrink-0 text-sm text-muted-foreground">
+                            {a.percent}%
+                          </span>
+                        </div>
+                        {/* percent bar */}
+                        <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted">
+                          <div
+                            className="h-full rounded-full"
+                            style={{ width: `${a.percent}%`, background: cls.color }}
+                          />
+                        </div>
+                        <p className="mt-0.5 text-[11px] text-muted-foreground">
+                          {fmtPct(cls.cagr)}/yr · ±{(cls.vol * 100).toFixed(0)}% vol
+                        </p>
+                      </div>
+                      {/* ETF dropdown */}
+                      <Select
+                        value={etfFor(a.classId)}
+                        onValueChange={(v) =>
+                          setPicks((prev) => ({ ...prev, [`${a.classId}:${region}`]: v }))
+                        }
+                      >
+                        <SelectTrigger className="h-8 w-32 shrink-0">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {list.map((e) => (
+                            <SelectItem key={e.symbol} value={e.symbol}>
+                              <span className="font-medium">{e.symbol}</span>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  );
+                })}
 
-          {blended && (
+          {blended ? (
             <div className="mt-3 flex items-center justify-between border-t pt-3 text-sm">
               <span className="text-muted-foreground">Blended expected return</span>
               <span className="tabular font-semibold text-primary">
                 {fmtPct(blended.annualReturn)}/yr · ±{(blended.annualVol * 100).toFixed(0)}% vol
               </span>
             </div>
+          ) : (
+            isCustom && (
+              <div className="mt-3 flex flex-col items-start gap-2 border-t pt-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+                <span className="text-muted-foreground">
+                  No price history loaded for your holdings yet — load it to project.
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={loadHistory}
+                  disabled={refreshing}
+                  className="shrink-0"
+                >
+                  <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />
+                  Load history
+                </Button>
+              </div>
+            )
           )}
         </CardContent>
       </Card>
@@ -319,7 +475,9 @@ export function PortfolioLibraryView({ base }: { base: string }) {
           {!projection || !returns || !end ? (
             <p className="py-8 text-center text-sm text-muted-foreground">
               <Sparkles className="mx-auto mb-2 h-5 w-5 opacity-50" />
-              Enter a starting amount to see the projection.
+              {isCustom
+                ? "Load your holdings' price history above to see the projection."
+                : "Enter a starting amount to see the projection."}
             </p>
           ) : (
             <>
