@@ -1,10 +1,19 @@
+import { formatDistanceToNow } from "date-fns";
 import { getCategories, getSettings } from "@/lib/queries";
+import { getGmailStatus } from "@/lib/gmail";
 import { SettingsView } from "@/components/settings-view";
+import { GmailConnectionCard } from "@/components/gmail-connection-card";
 
-export default async function SettingsPage() {
-  const [categories, settings] = await Promise.all([
+export default async function SettingsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ gmail?: string }>;
+}) {
+  const [categories, settings, gmail, params] = await Promise.all([
     getCategories(),
     getSettings(),
+    getGmailStatus(),
+    searchParams,
   ]);
 
   const cats = categories.map((c) => ({
@@ -23,6 +32,17 @@ export default async function SettingsPage() {
           Configure currency and manage your categories.
         </p>
       </div>
+      <GmailConnectionCard
+        connected={gmail.connected}
+        configured={gmail.configured}
+        email={gmail.email}
+        lastSyncLabel={
+          gmail.lastSyncAt
+            ? formatDistanceToNow(gmail.lastSyncAt, { addSuffix: true })
+            : null
+        }
+        statusFlag={params.gmail ?? null}
+      />
       <SettingsView
         currencyCode={settings.currencyCode}
         currencySymbol={settings.currencySymbol}

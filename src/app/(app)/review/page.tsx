@@ -1,10 +1,13 @@
 import { getCategories, getUnreviewedExpenses } from "@/lib/queries";
+import { getGmailStatus } from "@/lib/gmail";
 import { ReviewView } from "@/components/review-view";
+import { FetchEmailsPanel } from "@/components/fetch-emails-panel";
 
 export default async function ReviewPage() {
-  const [expenses, categories] = await Promise.all([
+  const [expenses, categories, gmail] = await Promise.all([
     getUnreviewedExpenses(),
     getCategories(),
+    getGmailStatus(),
   ]);
 
   const cats = categories.map((c) => ({
@@ -24,6 +27,7 @@ export default async function ReviewPage() {
           tick it off.
         </p>
       </div>
+      {gmail.connected && <FetchEmailsPanel />}
       <ReviewView expenses={expenses} categories={cats} />
     </div>
   );

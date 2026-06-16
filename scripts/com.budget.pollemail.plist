@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd job: poll CIBC alert emails every 10 minutes.
+
+  Install (macOS):
+    cp scripts/com.budget.pollemail.plist ~/Library/LaunchAgents/
+    launchctl load  ~/Library/LaunchAgents/com.budget.pollemail.plist   # start
+    launchctl unload ~/Library/LaunchAgents/com.budget.pollemail.plist  # stop
+
+  Logs go to /tmp/budget-pollemail.{out,err}.log. Adjust StartInterval (seconds)
+  to trade freshness vs. how often it wakes. A login shell (-lc) is used so node
+  / npm resolve from your normal PATH.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.budget.pollemail</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-lc</string>
+    <string>cd /Users/notjackl3/Programming/budget &amp;&amp; npm run poll:email</string>
+  </array>
+
+  <key>StartInterval</key>
+  <integer>600</integer>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/budget-pollemail.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/budget-pollemail.err.log</string>
+</dict>
+</plist>

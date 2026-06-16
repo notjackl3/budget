@@ -8,6 +8,12 @@ import { createRateLimiter } from "@/lib/rate-limit";
 import { dollarsToCents } from "@/lib/money";
 import { ymdToDate, dateToYMD } from "@/lib/dates";
 import { makeDedupeHash } from "@/lib/parse-statement";
+import { reconcileProvisional, ingestTransactions } from "@/lib/ingest";
+import {
+  fetchAlertTransactions,
+  markSynced,
+  disconnectGmail as gmailDisconnect,
+} from "@/lib/gmail";
 import { NEED_WANT, INCOME_TYPES } from "@/lib/categories";
 import { learnMerchantRule, learnFromExpenseIds } from "@/lib/merchant-rules";
 import { isCadence } from "@/lib/income";
@@ -65,14 +71,6 @@ export async function loginAction(formData: FormData) {
   if (!loginLimiter.hit(ip, Date.now()).allowed) {
     redirect(`/login?error=rate&from=${encodeURIComponent(from)}`);
   }
-
-  // TEMP DEBUG — remove after diagnosing prod login. Logs to Vercel runtime logs.
-  console.log("[login-debug]", {
-    appPasswordSet: !!process.env.APP_PASSWORD,
-    appPasswordLen: process.env.APP_PASSWORD?.length ?? 0,
-    typedLen: password.length,
-    matches: checkPassword(password),
-  });
 
   if (!checkPassword(password)) {
     redirect(`/login?error=1&from=${encodeURIComponent(from)}`);
@@ -433,8 +431,49 @@ export async function commitImport(input: {
   });
 
   await prisma.expense.createMany({ data });
+
+  // Retire any near-real-time email-alert rows these posted rows now confirm,
+  // so the same purchase isn't counted twice (provisional email row + posted
+  // statement row). Matches on amount + fuzzy merchant within a few days.
+  const reconciled = await reconcileProvisional(
+    input.rows.map((r) => ({
+      date: r.date,
+      description: r.description.trim(),
+      amountCents: dollarsToCents(r.amount),
+    })),
+  );
+
   bust(TAG.expenses, TAG.statements);
-  return { created: data.length, statementId: statement.id };
+  return { created: data.length, statementId: statement.id, reconciled };
+}
+
+// ------------------------------------------------------- Gmail connection
+
+/** Disconnect the Gmail account (revoke at Google + forget tokens locally). */
+export async function disconnectGmailAction() {
+  await assertAuthenticated();
+  await gmailDisconnect();
+  revalidatePath("/settings");
+}
+
+/**
+ * Pull any new CIBC alert emails right now and ingest them as provisional
+ * expenses. Backs the "Sync now" button; the cron poller does the same thing on
+ * a schedule. Returns counts for a toast.
+ */
+export async function syncGmailNow(daysBack?: number) {
+  await assertAuthenticated();
+  const { txns, scanned } = await fetchAlertTransactions(daysBack);
+  const result = await ingestTransactions(txns, { provisional: true });
+  await markSynced();
+  bust(TAG.expenses, TAG.statements);
+  revalidatePath("/settings");
+  revalidatePath("/review");
+  return {
+    scanned,
+    created: result.createdItems,
+    duplicates: result.duplicateItems,
+  };
 }
 
 // ----------------------------------------------------------- Income / jobs

@@ -52,6 +52,11 @@ model Expense {
   notes       String?
   recurring   Boolean @default(false)
   reviewed    Boolean @default(false)
+  // True for rows ingested from a near-real-time source (e.g. a CIBC
+  // transaction-alert email) that the official monthly statement has not yet
+  // confirmed. When the statement imports, provisional rows are reconciled
+  // away — the posted PDF row replaces the provisional one. See lib/ingest.ts.
+  provisional Boolean @default(false)
 
   categoryId      String?
   category        Category?      @relation(fields: [categoryId], references: [id], onDelete: SetNull)
@@ -83,6 +88,9 @@ model Expense {
   // as the table grows.
   @@index([reviewed])
   @@index([refundsExpenseId])
+  // Reconciliation scans the (usually tiny) set of unconfirmed email rows when a
+  // statement imports; index so that stays cheap as history grows.
+  @@index([provisional])
 }
 
 // An uploaded PDF statement. We keep the metadata for traceability even after
@@ -141,6 +149,25 @@ model MonthlyReflection {
   id         String @id @default(cuid())
   month      String @unique
   reflection String @default("")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// A connected Gmail account the email-alert poller reads from. Single row
+// (id = "singleton"). OAuth is brokered by Composio, so NO tokens are stored
+// here — only the Composio user id and connected-account id used to call their
+// API. (See lib/gmail.ts.)
+model GmailConnection {
+  id String @id @default("singleton")
+  // The Composio user id the connection is keyed under (from COMPOSIO_USER_ID).
+  composioUserId String
+  // Composio's connected-account id (ca_…) returned after the OAuth consent.
+  connectedAccountId String?
+  // The connected mailbox address, for display (best-effort; may be null).
+  email String?
+  // When the poller last successfully synced (drives the incremental query).
+  lastSyncAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

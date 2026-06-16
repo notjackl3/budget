@@ -1,7 +1,15 @@
 import { PrismaClient } from "@prisma/client";
+import { PrismaLibSQL } from "@prisma/adapter-libsql";
 import { DEFAULT_CATEGORIES } from "../src/lib/categories";
 
-const prisma = new PrismaClient();
+// Mirror lib/prisma.ts so `prisma db seed` targets the same database the app
+// uses — TURSO_DATABASE_URL when present (production/Turso), else DATABASE_URL.
+const adapter = new PrismaLibSQL({
+  url:
+    process.env.TURSO_DATABASE_URL ?? process.env.DATABASE_URL ?? "file:./dev.db",
+  authToken: process.env.TURSO_AUTH_TOKEN,
+});
+const prisma = new PrismaClient({ adapter });
 
 async function main() {
   // Categories

@@ -24,3 +24,5 @@ prisma/*.db.bak
 
 # typescript incremental build info
 tsconfig.tsbuildinfo
+.vercel
+.env.vercel-secret.txt

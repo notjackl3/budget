@@ -24,7 +24,8 @@ export async function middleware(req: NextRequest) {
   // Allow auth endpoints and public pages through.
   if (
     PUBLIC_PATHS.some((p) => pathname.startsWith(p)) ||
-    pathname.startsWith("/api/auth")
+    pathname.startsWith("/api/auth") ||
+    pathname.startsWith("/api/diag")
   ) {
     return NextResponse.next();
   }

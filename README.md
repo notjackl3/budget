@@ -68,6 +68,7 @@ Log in with the `APP_PASSWORD` you set in `.env`.
 | `npm run db:reset` | Drop & recreate the schema, then seed. |
 | `npm run db:studio` | Open Prisma Studio to inspect data. |
 | `npm run import:statements` | Parse every PDF in `statements/` and load it into the DB. Add `-- --reset` to wipe first. |
+| `npm run poll:email` | Ingest new CIBC alert emails over IMAP as provisional expenses. Add `-- --dry-run` to parse-and-print only. |
 
 ---
 
@@ -144,6 +145,57 @@ regex in `parse-statement.ts` are CIBC-specific. For a different statement
 layout, adjust those and add fixtures under `tests/fixtures/`. The import
 endpoint returns a clear error if a PDF can't be parsed (e.g. a scanned/image
 statement — those would need an OCR step, noted as a future enhancement).
+
+---
+
+## Near-real-time ingestion (CIBC email alerts)
+
+The monthly PDF is the source of truth, but you don't have to wait for it. CIBC
+can send a **per-purchase alert email** within minutes of a card swipe; a poller
+ingests those so the current month stays live, then the PDF reconciles them.
+
+How it fits the existing pipeline:
+
+- `src/lib/ingest.ts` — **source-agnostic** sink: `ingestTransactions()` takes
+  raw `{date, description, amountCents}` rows and runs the same
+  categorize → merchant-rules → income → dedupe → write path the PDF importer
+  uses. It avoids Next-only APIs so a cron script can call it directly.
+- `src/lib/parse-alert-email.ts` — **pure** alert text → one transaction
+  (validated against a real CIBC alert; see the fixture in `tests/`).
+- `src/lib/gmail.ts` — Gmail access **brokered by [Composio](https://composio.dev)**:
+  OAuth is managed by Composio (no Google Cloud project, no token storage here),
+  and `GMAIL_FETCH_EMAILS` reads the alerts. The public interface matches what
+  the routes/poller expect, so the transport is swappable.
+- `src/app/api/gmail/{connect,callback}` — the connect round-trip (Composio
+  returns a hosted consent URL; the callback persists the connected-account id).
+- **Settings → Email connection** — Connect / Disconnect / **Sync now** UI.
+- `scripts/poll-email.ts` — the same fetch+ingest on a schedule. Run
+  `npm run poll:email` (add `--dry-run`, or `--dry-run --raw` to dump the raw
+  Composio response); schedule with `scripts/com.budget.pollemail.plist`
+  (launchd, every 10 min).
+
+**Cross-source dedupe:** alert rows are flagged `provisional`. When the official
+statement imports, `reconcileProvisional()` retires any provisional row a posted
+row now covers (same amount + fuzzy merchant within a few days), so a purchase is
+never counted twice — even though the alert's amount/date/merchant text differs
+from the posted line.
+
+### One-time setup (Composio)
+
+No Google Cloud project — Composio brokers the OAuth.
+
+1. Create an account at <https://app.composio.dev> and copy an **API key**
+   (Settings → API Keys).
+2. Put it in `.env` as `COMPOSIO_API_KEY` (optionally set `COMPOSIO_USER_ID` and
+   `GMAIL_SEARCH_QUERY`; default query `from:cibc.com`). The app creates a
+   Composio-managed Gmail auth config automatically on first connect.
+3. In the app, **Settings → Email connection → Connect Gmail**, approve on the
+   hosted Google consent screen, done.
+4. Use **Sync now** to pull immediately, or load the launchd job for automation.
+
+> Trade-off: Composio is a third party that brokers mailbox access (tokens live
+> on their side). Fine for a personal app; just be aware your alert emails are
+> fetched through their service.
 
 ---
 
