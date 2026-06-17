@@ -14,6 +14,7 @@ import { Composio, AuthConfigTypes } from "@composio/core";
 import { prisma } from "./prisma";
 import { parseAlertEmail } from "./parse-alert-email";
 import { parseReceiptWithLLM } from "./receipt-llm";
+import { getSeenEmailIds, markEmailsSeen } from "./email-cache";
 import type { RawTxn } from "./ingest";
 
 const DEFAULT_USER_ID = "budget-user";
@@ -238,15 +239,20 @@ export async function fetchEmailCandidates(daysBack?: number): Promise<EmailCand
   });
 
   const messages = extractMessages(result);
+  // Skip anything a previous fetch already surfaced, so the picker only ever
+  // shows emails the user hasn't seen yet.
+  const seen = await getSeenEmailIds();
   const candidates: EmailCandidate[] = [];
   messages.forEach((m, idx) => {
+    const id = makeCandidateId(m, idx);
+    if (seen.has(id)) return;
     const body = emailText(m).slice(0, 6000);
     const subject = str(m.subject) || "(no subject)";
     const sender = str(m.sender) || str(m.from) || "(unknown sender)";
     const received = emailDate(m) ?? new Date();
     const snippet = (str(m.snippet) || str(m.preview && (m.preview as AnyRecord).body) || body).slice(0, 200);
     candidates.push({
-      id: makeCandidateId(m, idx),
+      id,
       subject,
       sender,
       receivedAt: received.toISOString(),
@@ -255,6 +261,9 @@ export async function fetchEmailCandidates(daysBack?: number): Promise<EmailCand
       body,
     });
   });
+  // Remember them now (at fetch time) so the next fetch won't re-list them,
+  // whether or not the user goes on to import each one.
+  await markEmailsSeen(candidates.map((c) => c.id));
   return candidates;
 }
 

@@ -201,10 +201,7 @@ export function FetchEmailsPanel() {
             <Mail className="h-4 w-4" />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <p className="eyebrow text-muted-foreground">Email · Gmail</p>
-              <StepPill mode={mode} />
-            </div>
+            <p className="eyebrow text-muted-foreground">Email</p>
             <h3 className="mt-0.5 text-base font-semibold tracking-tight">
               {mode === "idle" && "Check email for new transactions"}
               {mode === "picking" && "Pick emails to import"}
@@ -371,34 +368,6 @@ export function FetchEmailsPanel() {
 }
 
 /* ─── Subcomponents ───────────────────────────────────────────────────── */
-
-function StepPill({ mode }: { mode: Mode }) {
-  const steps: Array<{ key: Mode; label: string }> = [
-    { key: "idle", label: "1 Fetch" },
-    { key: "picking", label: "2 Pick" },
-    { key: "reviewing", label: "3 Review" },
-  ];
-  return (
-    <div className="flex gap-1">
-      {steps.map((s) => {
-        const active = s.key === mode;
-        return (
-          <span
-            key={s.key}
-            className={
-              "rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider " +
-              (active
-                ? "bg-primary/15 text-primary"
-                : "text-muted-foreground/60")
-            }
-          >
-            {s.label}
-          </span>
-        );
-      })}
-    </div>
-  );
-}
 
 function BulkRow({
   total,

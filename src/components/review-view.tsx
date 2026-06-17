@@ -52,6 +52,16 @@ export function ReviewView({
   const money = useMoney();
   const symbol = useCurrencySymbol();
   const [rows, setRows] = React.useState(expenses);
+  // `router.refresh()` (e.g. after importing receipt emails) re-runs the server
+  // component and hands us a fresh `expenses` prop, but useState ignores its
+  // initializer after the first mount — so re-sync whenever the underlying set
+  // of expenses changes. Optimistically-removed rows are already persisted as
+  // reviewed/deleted, so the refreshed prop won't re-add them.
+  const expensesKey = expenses.map((e) => e.id).join(",");
+  React.useEffect(() => {
+    setRows(expenses);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expensesKey]);
   const initialCount = expenses.length;
   const done = initialCount - rows.length;
 
