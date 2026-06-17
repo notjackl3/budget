@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { ArrowUpDown, Check, CheckCheck, Search, X } from "lucide-react";
+import { ArrowUpDown, Check, CheckCheck, Search, Trash2, X } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,7 +24,12 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useMoney, useCurrencySymbol } from "@/components/currency-provider";
 import { useToast } from "@/components/ui/toast";
-import { updateExpense, bulkReviewExpenses } from "@/app/actions";
+import {
+  updateExpense,
+  bulkReviewExpenses,
+  deleteExpense,
+  bulkExpenseAction,
+} from "@/app/actions";
 import { NEED_WANT, INCOME_TYPES } from "@/lib/categories";
 import { centsToDecimalString, dollarsToCents } from "@/lib/money";
 import type { ExpenseDTO, CategoryDTO } from "@/lib/types";
@@ -159,6 +164,28 @@ export function ReviewView({
     [visible, visibleCount],
   );
 
+  /** Permanently delete a single expense from the review list. Optimistic —
+   * we drop the row immediately and restore it if the server rejects the
+   * delete. No confirm dialog (the toast carries the irreversibility cue),
+   * matching the existing /expenses delete UX. */
+  async function deleteOne(e: ExpenseDTO) {
+    setRows((p) => p.filter((r) => r.id !== e.id));
+    setSelected((prev) => {
+      if (!prev.has(e.id)) return prev;
+      const next = new Set(prev);
+      next.delete(e.id);
+      return next;
+    });
+    try {
+      await deleteExpense(e.id);
+      router.refresh();
+      toast({ title: "Expense deleted", variant: "success" });
+    } catch {
+      toast({ title: "Could not delete", variant: "error" });
+      setRows((p) => [e, ...p]);
+    }
+  }
+
   async function markReviewed(e: ExpenseDTO) {
     const edit = edits[e.id] ?? {};
     const effectiveAmount = pendingEffective(e);
@@ -248,6 +275,26 @@ export function ReviewView({
       for (const id of selectedVisible) next[id] = { ...next[id], needWant };
       return next;
     });
+  }
+
+  /** Bulk delete every selected row. Same optimistic pattern as deleteOne. */
+  async function deleteSelected() {
+    const ids = selectedVisible;
+    if (ids.length === 0) return;
+    const removed = rows.filter((r) => ids.includes(r.id));
+    setRows((p) => p.filter((r) => !ids.includes(r.id)));
+    setSelected(new Set());
+    try {
+      await bulkExpenseAction(ids, { type: "delete" });
+      router.refresh();
+      toast({
+        title: `Deleted ${ids.length} expense${ids.length === 1 ? "" : "s"}`,
+        variant: "success",
+      });
+    } catch {
+      toast({ title: "Could not delete", variant: "error" });
+      setRows((p) => [...removed, ...p]);
+    }
   }
 
   async function reviewSelected() {
@@ -475,6 +522,14 @@ export function ReviewView({
               </Button>
               <Button
                 size="sm"
+                variant="outline"
+                className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                onClick={deleteSelected}
+              >
+                <Trash2 className="h-4 w-4" /> Delete
+              </Button>
+              <Button
+                size="sm"
                 variant="ghost"
                 onClick={() => setSelected(new Set())}
                 aria-label="Clear selection"
@@ -623,9 +678,21 @@ export function ReviewView({
                     </SelectContent>
                   </Select>
                 )}
-                <Button size="sm" onClick={() => markReviewed(e)}>
-                  <Check className="h-4 w-4" /> Reviewed
-                </Button>
+                <div className="flex items-center gap-1.5">
+                  <Button size="sm" onClick={() => markReviewed(e)}>
+                    <Check className="h-4 w-4" /> Reviewed
+                  </Button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                    onClick={() => deleteOne(e)}
+                    aria-label={`Delete ${e.description}`}
+                    title="Delete"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           );

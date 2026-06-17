@@ -87,6 +87,22 @@ export async function ingestTransactions(
   const existingRows = await prisma.expense.findMany({ select: { dedupeHash: true } });
   const seen = new Set(existingRows.map((r) => r.dedupeHash));
 
+  // Cross-source dedupe for provisional rows: a single real charge can show
+  // up as both a CIBC transaction alert AND a merchant receipt (Apple,
+  // Amazon, …) — different descriptions hash differently, so the hash check
+  // above won't catch it. Match on amount + fuzzy-merchant within
+  // RECONCILE_WINDOW_DAYS. Loaded only when we're ingesting provisional rows.
+  const existingProvisional = opts.provisional
+    ? await prisma.expense.findMany({
+        where: { provisional: true },
+        select: { amountCents: true, description: true, date: true },
+      })
+    : [];
+  // Track provisional rows accepted earlier in THIS batch so two emails for
+  // the same charge in one poll collapse to one row.
+  const batchProvisional: Array<{ amountCents: number; description: string; date: Date }> = [];
+  const provisionalWindowMs = RECONCILE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+
   const duplicateItems: IngestItem[] = [];
   const createdItems: IngestItem[] = [];
   const data: Prisma.ExpenseCreateManyInput[] = [];
@@ -97,6 +113,19 @@ export async function ingestTransactions(
     if (seen.has(dedupeHash)) {
       duplicateItems.push({ date: t.date, description, amountCents: t.amountCents });
       continue;
+    }
+    if (opts.provisional) {
+      const newDate = ymdToDate(t.date);
+      const twin = [...existingProvisional, ...batchProvisional].find((p) => {
+        if (p.amountCents !== t.amountCents) return false;
+        if (Math.abs(newDate.getTime() - p.date.getTime()) > provisionalWindowMs) return false;
+        return fuzzyMerchantMatch(p.description, description);
+      });
+      if (twin) {
+        duplicateItems.push({ date: t.date, description, amountCents: t.amountCents });
+        continue;
+      }
+      batchProvisional.push({ amountCents: t.amountCents, description, date: newDate });
     }
     seen.add(dedupeHash);
     createdItems.push({ date: t.date, description, amountCents: t.amountCents });

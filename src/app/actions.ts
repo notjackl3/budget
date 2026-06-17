@@ -11,9 +11,13 @@ import { makeDedupeHash } from "@/lib/parse-statement";
 import { reconcileProvisional, ingestTransactions } from "@/lib/ingest";
 import {
   fetchAlertTransactions,
+  fetchEmailCandidates,
+  parseEmailCandidate,
   markSynced,
   disconnectGmail as gmailDisconnect,
+  type EmailCandidate,
 } from "@/lib/gmail";
+import type { RawTxn } from "@/lib/ingest";
 import { NEED_WANT, INCOME_TYPES } from "@/lib/categories";
 import { learnMerchantRule, learnFromExpenseIds } from "@/lib/merchant-rules";
 import { isCadence } from "@/lib/income";
@@ -471,6 +475,51 @@ export async function syncGmailNow(daysBack?: number) {
   revalidatePath("/review");
   return {
     scanned,
+    created: result.createdItems,
+    duplicates: result.duplicateItems,
+  };
+}
+
+// --- Picker flow: fetch → user selects → parse → user approves → ingest ----
+//
+// Replaces the one-shot syncGmailNow for the UI panel. The split keeps LLM
+// cost proportional to user intent (we only parse rows they explicitly want)
+// and gives the user an edit step before anything lands in the DB.
+
+/** Step 1 — fetch recent emails as picker candidates. No parsing, no writes. */
+export async function fetchEmailCandidatesAction(daysBack?: number): Promise<EmailCandidate[]> {
+  await assertAuthenticated();
+  return fetchEmailCandidates(daysBack);
+}
+
+/** Step 2 — run the regex+LLM hybrid parser ONLY on the rows the user picked.
+ * Returns one row per input (parsed=null when nothing extractable) so the UI
+ * can show which selections didn't yield a transaction. */
+export async function parseEmailCandidatesAction(
+  candidates: EmailCandidate[],
+): Promise<Array<{ id: string; parsed: RawTxn | null; raw: EmailCandidate }>> {
+  await assertAuthenticated();
+  const out: Array<{ id: string; parsed: RawTxn | null; raw: EmailCandidate }> = [];
+  for (const c of candidates) {
+    out.push({ id: c.id, parsed: await parseEmailCandidate(c), raw: c });
+  }
+  return out;
+}
+
+/** Step 3 — write the rows the user approved (after any edits) as provisional
+ * expenses. Same dedupe/cross-source guards as the cron poller. */
+export async function ingestApprovedReceiptsAction(items: RawTxn[]) {
+  await assertAuthenticated();
+  if (items.length === 0) {
+    return { scanned: 0, created: [], duplicates: [] };
+  }
+  const result = await ingestTransactions(items, { provisional: true });
+  await markSynced();
+  bust(TAG.expenses, TAG.statements);
+  revalidatePath("/settings");
+  revalidatePath("/review");
+  return {
+    scanned: items.length,
     created: result.createdItems,
     duplicates: result.duplicateItems,
   };

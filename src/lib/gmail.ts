@@ -13,6 +13,7 @@
 import { Composio, AuthConfigTypes } from "@composio/core";
 import { prisma } from "./prisma";
 import { parseAlertEmail } from "./parse-alert-email";
+import { parseReceiptWithLLM } from "./receipt-llm";
 import type { RawTxn } from "./ingest";
 
 const DEFAULT_USER_ID = "budget-user";
@@ -153,7 +154,12 @@ export async function disconnectGmail(): Promise<void> {
  * so we only pull recent mail. Dedupe downstream makes any overlap harmless.
  */
 function buildQuery(lastSyncAt: Date | null, daysBack?: number): string {
-  const base = process.env.GMAIL_SEARCH_QUERY ?? "from:cibc.com";
+  // Default covers two sources: (a) CIBC transaction alerts (the legacy
+  // path — fast-pathed by the CIBC regex parser), and (b) Gmail's auto-tagged
+  // Purchases category, which catches Apple, Amazon, subscription renewals,
+  // and most other merchant receipts. The LLM parser in receipt-llm.ts
+  // handles whatever (b) returns.
+  const base = process.env.GMAIL_SEARCH_QUERY ?? "(from:cibc.com OR category:purchases)";
   if (daysBack && daysBack > 0) {
     return `${base} newer_than:${Math.floor(daysBack)}d`;
   }
@@ -169,6 +175,101 @@ export interface FetchResult {
   scanned: number;
   /** Raw tool response, surfaced by the poller's --dry-run for field tuning. */
   raw?: unknown;
+}
+
+/** Cheap keyword heuristic — does this email plausibly contain money? Runs in
+ * the fetch step so we can flag receipt-likely emails without paying for the
+ * LLM, and pre-select them for the user. Inclusive on purpose: anything with a
+ * currency symbol or a receipt-y keyword passes. */
+export function hasMoneyHint(text: string): boolean {
+  if (!text) return false;
+  // Currency symbol or 3-letter code followed by a number, e.g. "$15.24",
+  // "CAD 1,234.00", "€42".
+  if (/(?:\$|€|£|¥|\b(?:USD|CAD|EUR|GBP|JPY|AUD)\b)\s*\d[\d,]*(?:\.\d{1,2})?/i.test(text)) return true;
+  // Receipt/transaction vocabulary.
+  if (/\b(?:receipt|invoice|order|payment|charged|purchase|transaction|paid|total|amount|subtotal|refund|reimburs|spent)\b/i.test(text)) return true;
+  return false;
+}
+
+/** One fetched email, before any LLM/regex parsing. Surfaced to the UI for
+ * user selection. `body` is kept so the parse step can re-run on a chosen
+ * subset without re-fetching Gmail. */
+export interface EmailCandidate {
+  id: string;
+  subject: string;
+  sender: string;
+  /** ISO 8601 — re-hydrated to a Date on the server when parsing. */
+  receivedAt: string;
+  /** Short preview for the picker (~200 chars). */
+  snippet: string;
+  /** Heuristic flag — visual hint + default-selected state in the picker. */
+  hasMoneyHint: boolean;
+  /** Up to ~6KB of normalized body text, used by the parsers later. */
+  body: string;
+}
+
+function makeCandidateId(m: AnyRecord, idx: number): string {
+  const native = m.id ?? m.messageId ?? m.message_id ?? m.gmailMessageId;
+  if (typeof native === "string" && native) return native;
+  return `idx-${idx}`;
+}
+
+/** Fetch recent emails matching the configured Gmail search and return them as
+ * unparsed candidates for the user to pick from. The actual extraction happens
+ * later in {@link parseEmailCandidate} — keeps LLM cost proportional to user
+ * intent, not inbox volume. */
+export async function fetchEmailCandidates(daysBack?: number): Promise<EmailCandidate[]> {
+  const conn = await prisma.gmailConnection.findUnique({
+    where: { id: "singleton" },
+    select: { lastSyncAt: true, connectedAccountId: true },
+  });
+  if (!conn?.connectedAccountId) throw new Error("Gmail is not connected.");
+
+  const composio = getComposio();
+  const result = await composio.tools.execute("GMAIL_FETCH_EMAILS", {
+    userId: getUserId(),
+    arguments: {
+      query: buildQuery(conn.lastSyncAt, daysBack),
+      max_results: 25,
+      include_payload: true,
+      verbose: true,
+    },
+    dangerouslySkipVersionCheck: true,
+  });
+
+  const messages = extractMessages(result);
+  const candidates: EmailCandidate[] = [];
+  messages.forEach((m, idx) => {
+    const body = emailText(m).slice(0, 6000);
+    const subject = str(m.subject) || "(no subject)";
+    const sender = str(m.sender) || str(m.from) || "(unknown sender)";
+    const received = emailDate(m) ?? new Date();
+    const snippet = (str(m.snippet) || str(m.preview && (m.preview as AnyRecord).body) || body).slice(0, 200);
+    candidates.push({
+      id: makeCandidateId(m, idx),
+      subject,
+      sender,
+      receivedAt: received.toISOString(),
+      snippet,
+      hasMoneyHint: hasMoneyHint(subject + " " + body),
+      body,
+    });
+  });
+  return candidates;
+}
+
+/** Hybrid parser for ONE candidate: CIBC regex fast-path → LLM fallback. Used
+ * after the user picks rows in the UI, so the LLM only runs on their selection. */
+export async function parseEmailCandidate(c: EmailCandidate): Promise<RawTxn | null> {
+  const ref = new Date(c.receivedAt);
+  const fast = parseAlertEmail(c.body, { referenceDate: ref });
+  if (fast) return fast;
+  const llm = await parseReceiptWithLLM(c.body, {
+    referenceDate: ref,
+    subject: c.subject,
+    sender: c.sender,
+  });
+  return llm;
 }
 
 /** Read recent CIBC alert emails via Composio and parse them into transactions.
@@ -197,9 +298,21 @@ export async function fetchAlertTransactions(daysBack?: number): Promise<FetchRe
 
   const messages = extractMessages(result);
   const txns: RawTxn[] = [];
+  // Two-stage parsing: try the CIBC regex first (free + instant), fall back
+  // to the LLM for anything it can't handle (Apple, Amazon, subscriptions,
+  // etc.). The LLM call is sequential per email to keep peak concurrency
+  // bounded; volume per poll is small (max_results=25 below).
   for (const m of messages) {
-    const alert = parseAlertEmail(emailText(m), { referenceDate: emailDate(m) });
-    if (alert) txns.push(alert);
+    const body = emailText(m);
+    const ref = emailDate(m);
+    const fast = parseAlertEmail(body, { referenceDate: ref });
+    if (fast) { txns.push(fast); continue; }
+    const llm = await parseReceiptWithLLM(body, {
+      referenceDate: ref,
+      subject: str(m.subject),
+      sender: str(m.sender) || str(m.from),
+    });
+    if (llm) txns.push(llm);
   }
   return { txns, scanned: messages.length, raw: result };
 }
