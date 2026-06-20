@@ -39,6 +39,7 @@ const RANGES = [
   { value: "30", label: "Last 30 days" },
   { value: "90", label: "Last 90 days" },
   { value: "365", label: "Last year" },
+  { value: "custom", label: "Custom…" },
 ];
 
 type Mode = "idle" | "picking" | "reviewing";
@@ -69,6 +70,7 @@ export function FetchEmailsPanel() {
   const money = useMoney();
   const [mode, setMode] = React.useState<Mode>("idle");
   const [range, setRange] = React.useState("sync");
+  const [customDays, setCustomDays] = React.useState("14");
   const [busy, setBusy] = React.useState(false);
   const [candidates, setCandidates] = React.useState<EmailCandidate[]>([]);
   const [picked, setPicked] = React.useState<Set<string>>(new Set());
@@ -84,7 +86,12 @@ export function FetchEmailsPanel() {
   async function doFetch() {
     setBusy(true);
     try {
-      const daysBack = range === "sync" ? undefined : Number(range);
+      const daysBack =
+        range === "sync"
+          ? undefined
+          : range === "custom"
+            ? Math.max(1, Math.floor(Number(customDays) || 0))
+            : Number(range);
       const list = await fetchEmailCandidatesAction(daysBack);
       setCandidates(list);
       setPicked(new Set(list.filter((c) => c.hasMoneyHint).map((c) => c.id)));
@@ -191,6 +198,8 @@ export function FetchEmailsPanel() {
   const moneyHinted = candidates.filter((c) => c.hasMoneyHint).length;
   const selectedRowCount = rows.filter((r) => r.selected).length;
   const unparsedRowCount = rows.filter((r) => r.unparsed).length;
+  const customDaysValid =
+    range !== "custom" || Math.floor(Number(customDays)) >= 1;
 
   return (
     <Card className="glass-strong overflow-hidden border-0">
@@ -249,7 +258,21 @@ export function FetchEmailsPanel() {
                     ))}
                   </SelectContent>
                 </Select>
-                <Button onClick={doFetch} disabled={busy}>
+                {range === "custom" && (
+                  <div className="flex items-center gap-1.5">
+                    <Input
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={customDays}
+                      onChange={(e) => setCustomDays(e.target.value)}
+                      className="tabular w-[72px] text-right"
+                      aria-label="Number of days"
+                    />
+                    <span className="text-sm text-muted-foreground">days</span>
+                  </div>
+                )}
+                <Button onClick={doFetch} disabled={busy || !customDaysValid}>
                   <RotateCw className={busy ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
                   {busy ? "Fetching…" : "Fetch"}
                 </Button>
