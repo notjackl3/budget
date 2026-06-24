@@ -14,8 +14,10 @@ import { Composio, AuthConfigTypes } from "@composio/core";
 import { prisma } from "./prisma";
 import { parseAlertEmail } from "./parse-alert-email";
 import { parseReceiptWithLLM } from "./receipt-llm";
-import { getSeenEmailIds, markEmailsSeen } from "./email-cache";
-import type { RawTxn } from "./ingest";
+import { getDoneEmailIds, markEmailsDone } from "./processed-emails";
+import { makeDedupeHash } from "./parse-statement";
+import { fuzzyMerchantMatch, RECONCILE_WINDOW_DAYS, type RawTxn } from "./ingest";
+import { ymdToDate } from "./dates";
 
 const DEFAULT_USER_ID = "budget-user";
 
@@ -205,6 +207,10 @@ export interface EmailCandidate {
   snippet: string;
   /** Heuristic flag — visual hint + default-selected state in the picker. */
   hasMoneyHint: boolean;
+  /** True if the user has already handled this email (imported or dismissed).
+   * The picker still shows it, but greyed with a "Done" badge and not
+   * pre-selected, so the same receipt is never re-reviewed. */
+  done: boolean;
   /** Up to ~6KB of normalized body text, used by the parsers later. */
   body: string;
 }
@@ -239,31 +245,77 @@ export async function fetchEmailCandidates(daysBack?: number): Promise<EmailCand
   });
 
   const messages = extractMessages(result);
-  // Skip anything a previous fetch already surfaced, so the picker only ever
-  // shows emails the user hasn't seen yet.
-  const seen = await getSeenEmailIds();
+  // Tag (don't hide) emails the user has already handled, so a re-fetched window
+  // shows them greyed with a "Done" badge rather than silently dropping them.
+  const done = await getDoneEmailIds();
+
+  // Retro-detect the pre-feature backlog: emails imported before "done" tracking
+  // existed left no stored link, but they DID leave an Expense. Re-derive each
+  // email's transaction with the FREE regex parser (no LLM at fetch time) and, if
+  // it matches an expense already in the DB, treat the email as handled. Matching
+  // reuses the same amount + date-window + fuzzy-merchant logic as import dedupe,
+  // so anything you've already imported (incl. rows later replaced by a PDF) is
+  // caught. Receipts that need the LLM to parse won't auto-flag here — those are
+  // cleared with the picker's "Mark done" button.
+  const expenses = await prisma.expense.findMany({
+    select: { dedupeHash: true, amountCents: true, description: true, date: true },
+  });
+  const existingHashes = new Set(expenses.map((e) => e.dedupeHash));
+  const windowMs = RECONCILE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+  const alreadyImported = (body: string, received: Date): boolean => {
+    const parsed = parseAlertEmail(body, { referenceDate: received });
+    if (!parsed) return false;
+    if (existingHashes.has(makeDedupeHash(parsed.date, parsed.amountCents, parsed.description))) {
+      return true;
+    }
+    const at = ymdToDate(parsed.date).getTime();
+    return expenses.some(
+      (e) =>
+        e.amountCents === parsed.amountCents &&
+        Math.abs(at - new Date(e.date).getTime()) <= windowMs &&
+        fuzzyMerchantMatch(e.description, parsed.description),
+    );
+  };
+
   const candidates: EmailCandidate[] = [];
+  const autoDone: EmailCandidate[] = [];
   messages.forEach((m, idx) => {
     const id = makeCandidateId(m, idx);
-    if (seen.has(id)) return;
     const body = emailText(m).slice(0, 6000);
     const subject = str(m.subject) || "(no subject)";
     const sender = str(m.sender) || str(m.from) || "(unknown sender)";
     const received = emailDate(m) ?? new Date();
     const snippet = (str(m.snippet) || str(m.preview && (m.preview as AnyRecord).body) || body).slice(0, 200);
-    candidates.push({
+    const c: EmailCandidate = {
       id,
       subject,
       sender,
       receivedAt: received.toISOString(),
       snippet,
       hasMoneyHint: hasMoneyHint(subject + " " + body),
+      done: done.has(id) || alreadyImported(body, received),
       body,
-    });
+    };
+    candidates.push(c);
+    // Persist newly retro-detected marks so the badge is stable and the match
+    // isn't recomputed on every future fetch.
+    if (c.done && !done.has(id)) autoDone.push(c);
   });
-  // Remember them now (at fetch time) so the next fetch won't re-list them,
-  // whether or not the user goes on to import each one.
-  await markEmailsSeen(candidates.map((c) => c.id));
+  if (autoDone.length > 0) {
+    await markEmailsDone(
+      autoDone.map((c) => ({
+        id: c.id,
+        subject: c.subject,
+        sender: c.sender,
+        receivedAt: c.receivedAt,
+      })),
+    );
+  }
+  // Unhandled first, already-done last; newest-first within each group.
+  candidates.sort((a, b) => {
+    if (a.done !== b.done) return a.done ? 1 : -1;
+    return b.receivedAt.localeCompare(a.receivedAt);
+  });
   return candidates;
 }
 

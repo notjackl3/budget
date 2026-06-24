@@ -18,6 +18,11 @@ import {
   type EmailCandidate,
 } from "@/lib/gmail";
 import type { RawTxn } from "@/lib/ingest";
+import {
+  markEmailsDone,
+  unmarkEmailsDone,
+  type DoneEmailInput,
+} from "@/lib/processed-emails";
 import { NEED_WANT, INCOME_TYPES } from "@/lib/categories";
 import { learnMerchantRule, learnFromExpenseIds } from "@/lib/merchant-rules";
 import { isCadence } from "@/lib/income";
@@ -507,13 +512,19 @@ export async function parseEmailCandidatesAction(
 }
 
 /** Step 3 — write the rows the user approved (after any edits) as provisional
- * expenses. Same dedupe/cross-source guards as the cron poller. */
-export async function ingestApprovedReceiptsAction(items: RawTxn[]) {
+ * expenses. Same dedupe/cross-source guards as the cron poller. The emails those
+ * rows came from are marked "done" so a future fetch shows them handled instead
+ * of asking the user to re-review them. */
+export async function ingestApprovedReceiptsAction(
+  items: RawTxn[],
+  doneEmails: DoneEmailInput[] = [],
+) {
   await assertAuthenticated();
   if (items.length === 0) {
     return { scanned: 0, created: [], duplicates: [] };
   }
   const result = await ingestTransactions(items, { provisional: true });
+  if (doneEmails.length > 0) await markEmailsDone(doneEmails);
   await markSynced();
   bust(TAG.expenses, TAG.statements);
   revalidatePath("/settings");
@@ -523,6 +534,22 @@ export async function ingestApprovedReceiptsAction(items: RawTxn[]) {
     created: result.createdItems,
     duplicates: result.duplicateItems,
   };
+}
+
+/** Mark emails as handled WITHOUT importing them — for dismissing non-receipts
+ * (or clearing an existing backlog) so they don't keep resurfacing in the
+ * picker. Returns how many marks were recorded. */
+export async function markEmailsDoneAction(emails: DoneEmailInput[]) {
+  await assertAuthenticated();
+  const marked = await markEmailsDone(emails);
+  return { marked };
+}
+
+/** Undo a "done" mark so the email is treated as unhandled again. */
+export async function unmarkEmailsDoneAction(ids: string[]) {
+  await assertAuthenticated();
+  await unmarkEmailsDone(ids);
+  return { unmarked: ids.length };
 }
 
 // ----------------------------------------------------------- Income / jobs

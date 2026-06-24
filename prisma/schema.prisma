@@ -173,6 +173,22 @@ model GmailConnection {
   updatedAt DateTime @updatedAt
 }
 
+// A Gmail message the user has already dealt with in the email picker — either
+// imported as an expense or explicitly dismissed ("mark done"). The picker shows
+// these with a greyed "Done" badge so re-fetching a window doesn't make the user
+// re-review mail they've already handled. Keyed by the Gmail message id (the same
+// id surfaced as EmailCandidate.id). Persisted here, not in a /tmp cache, so the
+// mark survives restarts and serverless cold starts. (See lib/processed-emails.ts.)
+model ProcessedEmail {
+  // Gmail message id == EmailCandidate.id. Primary key dedupes the mark.
+  id         String    @id
+  // Stored for display/auditing only — the id is what matching keys on.
+  subject    String?
+  sender     String?
+  receivedAt DateTime?
+  markedAt   DateTime  @default(now())
+}
+
 // Singleton app settings (always id = "singleton").
 model Settings {
   id             String @id @default("singleton")

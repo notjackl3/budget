@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
   Check,
+  CheckCheck,
   CheckSquare,
   CircleAlert,
   DollarSign,
@@ -29,9 +30,11 @@ import {
   fetchEmailCandidatesAction,
   parseEmailCandidatesAction,
   ingestApprovedReceiptsAction,
+  markEmailsDoneAction,
 } from "@/app/actions";
 import type { EmailCandidate } from "@/lib/gmail";
 import type { RawTxn } from "@/lib/ingest";
+import type { DoneEmailInput } from "@/lib/processed-emails";
 
 const RANGES = [
   { value: "sync", label: "Since last sync" },
@@ -53,6 +56,8 @@ interface ReviewRow {
   unparsed: boolean;
   subject: string;
   sender: string;
+  /** Carried through so the email can be marked "done" on save. */
+  receivedAt: string;
 }
 
 /** Three-step picker:
@@ -75,6 +80,7 @@ export function FetchEmailsPanel() {
   const [candidates, setCandidates] = React.useState<EmailCandidate[]>([]);
   const [picked, setPicked] = React.useState<Set<string>>(new Set());
   const [rows, setRows] = React.useState<ReviewRow[]>([]);
+  const [showDone, setShowDone] = React.useState(true);
 
   function reset() {
     setMode("idle");
@@ -94,7 +100,10 @@ export function FetchEmailsPanel() {
             : Number(range);
       const list = await fetchEmailCandidatesAction(daysBack);
       setCandidates(list);
-      setPicked(new Set(list.filter((c) => c.hasMoneyHint).map((c) => c.id)));
+      // Pre-select receipt-likely emails the user hasn't already handled.
+      setPicked(
+        new Set(list.filter((c) => c.hasMoneyHint && !c.done).map((c) => c.id)),
+      );
       setMode("picking");
       if (list.length === 0) {
         toast({ title: "No emails in that window", variant: "default" });
@@ -130,6 +139,7 @@ export function FetchEmailsPanel() {
           unparsed: parsed == null,
           subject: raw.subject,
           sender: raw.sender,
+          receivedAt: raw.receivedAt,
         };
       });
       setRows(built);
@@ -148,6 +158,7 @@ export function FetchEmailsPanel() {
   async function doSave() {
     const approved = rows.filter((r) => r.selected);
     const items: RawTxn[] = [];
+    const doneEmails: DoneEmailInput[] = [];
     for (const r of approved) {
       const desc = r.description.trim();
       if (!desc) continue;
@@ -158,6 +169,13 @@ export function FetchEmailsPanel() {
         date: r.date,
         description: desc,
         amountCents: Math.round(dollars * 100),
+      });
+      // Remember the source email so re-fetching shows it as handled.
+      doneEmails.push({
+        id: r.id,
+        subject: r.subject,
+        sender: r.sender,
+        receivedAt: r.receivedAt,
       });
     }
     if (items.length === 0) {
@@ -170,7 +188,7 @@ export function FetchEmailsPanel() {
     }
     setBusy(true);
     try {
-      const r = await ingestApprovedReceiptsAction(items);
+      const r = await ingestApprovedReceiptsAction(items, doneEmails);
       toast({
         title: r.created.length
           ? `Added ${r.created.length} transaction${r.created.length === 1 ? "" : "s"}`
@@ -193,8 +211,60 @@ export function FetchEmailsPanel() {
     }
   }
 
+  /** Mark the currently-selected emails as handled WITHOUT importing them —
+   * for clearing non-receipts or an existing backlog. Greys them in place so
+   * the user can see what's been cleared. */
+  async function doMarkDone() {
+    const targets = candidates.filter((c) => picked.has(c.id) && !c.done);
+    if (targets.length === 0) {
+      toast({ title: "Select some emails to mark done", variant: "default" });
+      return;
+    }
+    setBusy(true);
+    try {
+      await markEmailsDoneAction(
+        targets.map((c) => ({
+          id: c.id,
+          subject: c.subject,
+          sender: c.sender,
+          receivedAt: c.receivedAt,
+        })),
+      );
+      const ids = new Set(targets.map((c) => c.id));
+      setCandidates((prev) =>
+        prev.map((c) => (ids.has(c.id) ? { ...c, done: true } : c)),
+      );
+      setPicked((prev) => {
+        const next = new Set(prev);
+        ids.forEach((id) => next.delete(id));
+        return next;
+      });
+      toast({
+        title: `Marked ${targets.length} as done`,
+        description: "They won't ask for review on the next fetch.",
+        variant: "success",
+      });
+    } catch (err) {
+      toast({
+        title: "Couldn't mark done",
+        description: err instanceof Error ? err.message : undefined,
+        variant: "error",
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   // Pre-derive a few counts for the header subline.
   const pickedCount = picked.size;
+  const doneCount = candidates.filter((c) => c.done).length;
+  // Only non-done emails count toward the "selectable" picker actions.
+  const pickedUndone = candidates.filter(
+    (c) => picked.has(c.id) && !c.done,
+  ).length;
+  const visibleCandidates = showDone
+    ? candidates
+    : candidates.filter((c) => !c.done);
   const moneyHinted = candidates.filter((c) => c.hasMoneyHint).length;
   const selectedRowCount = rows.filter((r) => r.selected).length;
   const unparsedRowCount = rows.filter((r) => r.unparsed).length;
@@ -224,6 +294,12 @@ export function FetchEmailsPanel() {
                   <span className="tabular font-medium text-foreground">{pickedCount}</span>{" "}
                   of <span className="tabular">{candidates.length}</span> selected ·{" "}
                   <span className="tabular">{moneyHinted}</span> look like receipts
+                  {doneCount > 0 && (
+                    <>
+                      {" · "}
+                      <span className="tabular">{doneCount}</span> already done
+                    </>
+                  )}
                 </>
               )}
               {mode === "reviewing" && (
@@ -284,6 +360,15 @@ export function FetchEmailsPanel() {
                   <ArrowLeft className="h-4 w-4" />
                   Back
                 </Button>
+                <Button
+                  variant="ghost"
+                  onClick={doMarkDone}
+                  disabled={busy || pickedUndone === 0}
+                  title="Mark selected as handled without importing"
+                >
+                  <CheckCheck className="h-4 w-4" />
+                  {`Mark ${pickedUndone} done`}
+                </Button>
                 <Button onClick={doParse} disabled={busy || pickedCount === 0}>
                   <Sparkles className={busy ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
                   {busy ? "Parsing…" : `Parse ${pickedCount}`}
@@ -312,13 +397,22 @@ export function FetchEmailsPanel() {
               total={candidates.length}
               selected={pickedCount}
               moneyHinted={moneyHinted}
-              onAll={() => setPicked(new Set(candidates.map((c) => c.id)))}
+              doneCount={doneCount}
+              showDone={showDone}
+              onAll={() =>
+                setPicked(new Set(candidates.filter((c) => !c.done).map((c) => c.id)))
+              }
               onHinted={() =>
                 setPicked(
-                  new Set(candidates.filter((c) => c.hasMoneyHint).map((c) => c.id)),
+                  new Set(
+                    candidates
+                      .filter((c) => c.hasMoneyHint && !c.done)
+                      .map((c) => c.id),
+                  ),
                 )
               }
               onNone={() => setPicked(new Set())}
+              onToggleDone={() => setShowDone((v) => !v)}
             />
             {candidates.length === 0 ? (
               <EmptyState
@@ -328,7 +422,7 @@ export function FetchEmailsPanel() {
               />
             ) : (
               <div className="space-y-1.5">
-                {candidates.map((c) => (
+                {visibleCandidates.map((c) => (
                   <CandidateRow
                     key={c.id}
                     candidate={c}
@@ -396,17 +490,24 @@ function BulkRow({
   total,
   selected,
   moneyHinted,
+  doneCount,
+  showDone,
   onAll,
   onHinted,
   onNone,
+  onToggleDone,
 }: {
   total: number;
   selected: number;
   moneyHinted: number;
+  doneCount: number;
+  showDone: boolean;
   onAll: () => void;
   onHinted: () => void;
   onNone: () => void;
+  onToggleDone: () => void;
 }) {
+  const undone = total - doneCount;
   return (
     <div className="glass flex flex-wrap items-center gap-2 rounded-xl px-3 py-2 text-xs">
       <span className="eyebrow text-muted-foreground">Select</span>
@@ -415,7 +516,7 @@ function BulkRow({
         onClick={onAll}
         className="rounded-md px-2 py-1 font-medium hover:bg-muted/60"
       >
-        All ({total})
+        All ({undone})
       </button>
       <button
         type="button"
@@ -431,6 +532,15 @@ function BulkRow({
       >
         None
       </button>
+      {doneCount > 0 && (
+        <button
+          type="button"
+          onClick={onToggleDone}
+          className="rounded-md px-2 py-1 font-medium text-muted-foreground hover:bg-muted/60"
+        >
+          {showDone ? "Hide" : "Show"} done ({doneCount})
+        </button>
+      )}
       <span className="ml-auto text-muted-foreground">
         <span className="tabular font-medium text-foreground">{selected}</span> selected
       </span>
@@ -447,11 +557,13 @@ function CandidateRow({
   checked: boolean;
   onToggle: (checked: boolean) => void;
 }) {
+  const { done } = candidate;
   return (
     <label
       className={
         "glass glass-interactive flex cursor-pointer items-start gap-3 rounded-xl px-3 py-2.5 " +
-        (checked ? "glass-active" : "")
+        (checked ? "glass-active " : "") +
+        (done ? "opacity-55" : "")
       }
     >
       {/* Custom-feel checkbox via icon swap — lighter than a raw <input> on glass */}
@@ -467,6 +579,12 @@ function CandidateRow({
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
           <span className="truncate text-sm font-medium">{candidate.subject}</span>
+          {done && (
+            <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <Check className="h-2.5 w-2.5" />
+              Done
+            </span>
+          )}
           {candidate.hasMoneyHint && (
             <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
               <DollarSign className="h-2.5 w-2.5" />
