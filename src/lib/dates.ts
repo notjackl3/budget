@@ -96,4 +96,14 @@ export function monthRange(key: string): { start: Date; end: Date } {
   return { start: startOfMonth(d), end: endOfMonth(d) };
 }
 
+/** Add `n` whole months (can be negative) to a "YYYY-MM" key, returning a new
+ *  "YYYY-MM" key. Used to walk a projection's month index forward from today. */
+export function addMonthsToKey(key: string, n: number): string {
+  const [y, m] = key.split("-").map(Number);
+  const total = y * 12 + (m - 1) + n;
+  const ny = Math.floor(total / 12);
+  const nm = (total % 12) + 1;
+  return `${ny}-${String(nm).padStart(2, "0")}`;
+}
+
 export { startOfMonth, endOfMonth, startOfWeek, endOfWeek };

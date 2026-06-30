@@ -5,11 +5,73 @@
 
 import type { AggExpense } from "./aggregate";
 import { isIncome } from "./aggregate";
-import { monthKey } from "./dates";
+import { monthKey, addMonthsToKey } from "./dates";
 import type { ReturnStats } from "./investments";
 
 /** The literal key of the investment-contribution bucket (vs. a categoryId). */
 export const INVESTMENT_KEY = "investment";
+
+// ---------------------------------------------------------- Contribution plan
+// A contribution schedule is a list of time-bounded segments: "X dollars every
+// Y weeks/months, from month A to month B (or forever)". The projection turns
+// each segment into a monthly-equivalent amount per calendar month and sums
+// them, so contributions can ramp, pause, or run indefinitely.
+
+export type ContribUnit = "week" | "month";
+
+export interface ContribSegment {
+  amountCents: number; // X — dollars contributed per period
+  unit: ContribUnit; // period unit
+  every: number; // Y — number of periods between contributions (>= 1)
+  startMonth: string | null; // "YYYY-MM" inclusive; null = starts now
+  endMonth: string | null; // "YYYY-MM" inclusive; null = runs forever
+}
+
+export interface InvestPlan {
+  startCents: number | null; // null = use the current portfolio value
+  segments: ContribSegment[];
+}
+
+/** Average weeks per month (52 / 12), so weekly cadences convert cleanly. */
+const WEEKS_PER_MONTH = 52 / 12;
+
+/**
+ * The monthly-equivalent contribution of one segment in calendar month
+ * `calMonth` ("YYYY-MM"), or 0 when the month falls outside the segment window.
+ * "$X every Y weeks" averages to X·(52/12)/Y per month; "$X every Y months" to
+ * X/Y per month. Returned in (possibly fractional) cents.
+ */
+export function segmentMonthlyContribution(
+  seg: ContribSegment,
+  calMonth: string,
+): number {
+  if (seg.startMonth && calMonth < seg.startMonth) return 0;
+  if (seg.endMonth && calMonth > seg.endMonth) return 0;
+  const every = Math.max(1, seg.every);
+  const periodsPerMonth = seg.unit === "week" ? WEEKS_PER_MONTH / every : 1 / every;
+  return seg.amountCents * periodsPerMonth;
+}
+
+/** Total monthly-equivalent contribution across all segments for a calendar month. */
+export function scheduleMonthlyContribution(
+  segments: ContribSegment[],
+  calMonth: string,
+): number {
+  return segments.reduce((sum, s) => sum + segmentMonthlyContribution(s, calMonth), 0);
+}
+
+/**
+ * Build the per-month contribution function the projection consumes: maps the
+ * projection's month index (1 = the month after `currentMonth`) onto a calendar
+ * month and sums the active schedule segments there.
+ */
+export function contributionScheduleFn(
+  segments: ContribSegment[],
+  currentMonth: string,
+): (monthIndex: number) => number {
+  return (monthIndex) =>
+    scheduleMonthlyContribution(segments, addMonthsToKey(currentMonth, monthIndex));
+}
 
 /**
  * Average monthly spend per category over the most recent `months` calendar
@@ -255,13 +317,18 @@ export function projectValue(opts: {
   monthlyContributionCents: number;
   annualReturn: number;
   years: number;
+  /** Optional per-month contribution (1-based month index). When given it
+   *  overrides the flat `monthlyContributionCents`, letting contributions vary
+   *  over time (a schedule). */
+  contributionForMonth?: (monthIndex: number) => number;
 }): ProjectionPoint[] {
-  const { startCents, monthlyContributionCents, annualReturn, years } = opts;
+  const { startCents, monthlyContributionCents, annualReturn, years, contributionForMonth } = opts;
   const monthlyRate = (1 + annualReturn) ** (1 / 12) - 1;
   const points: ProjectionPoint[] = [{ year: 0, valueCents: Math.round(startCents) }];
   let value = startCents;
   for (let m = 1; m <= years * 12; m++) {
-    value = value * (1 + monthlyRate) + monthlyContributionCents;
+    const contrib = contributionForMonth ? contributionForMonth(m) : monthlyContributionCents;
+    value = value * (1 + monthlyRate) + contrib;
     if (m % 12 === 0) points.push({ year: m / 12, valueCents: Math.round(value) });
   }
   return points;
@@ -303,6 +370,8 @@ export function projectScenarios(opts: {
   monthlyContributionCents: number;
   stats: ReturnStats;
   years: number;
+  /** Optional contribution schedule (see projectValue). */
+  contributionForMonth?: (monthIndex: number) => number;
 }): ScenarioPoint[] {
   const returns = scenarioReturns(opts.stats);
   const run = (annualReturn: number) =>
@@ -311,16 +380,29 @@ export function projectScenarios(opts: {
       monthlyContributionCents: opts.monthlyContributionCents,
       annualReturn,
       years: opts.years,
+      contributionForMonth: opts.contributionForMonth,
     });
   const best = run(returns.best);
   const average = run(returns.average);
   const worst = run(returns.worst);
+
+  // Cumulative money put in by the end of each year (start + contributions, no
+  // growth) — the flat "what you paid in" reference line. Tracked month by month
+  // so a varying schedule is summed correctly, not assumed constant.
+  const contributedByYear: number[] = [opts.startCents];
+  let cumContrib = 0;
+  for (let m = 1; m <= opts.years * 12; m++) {
+    cumContrib += opts.contributionForMonth
+      ? opts.contributionForMonth(m)
+      : opts.monthlyContributionCents;
+    if (m % 12 === 0) contributedByYear.push(opts.startCents + cumContrib);
+  }
+
   return average.map((p, i) => ({
     year: p.year,
     bestCents: best[i].valueCents,
     averageCents: p.valueCents,
     worstCents: worst[i].valueCents,
-    contributedCents:
-      opts.startCents + p.year * 12 * opts.monthlyContributionCents,
+    contributedCents: Math.round(contributedByYear[i]),
   }));
 }

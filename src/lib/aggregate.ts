@@ -215,6 +215,43 @@ export function monthlySummary(
   };
 }
 
+export interface DaySpend {
+  day: string; // "YYYY-MM-DD"
+  dayOfMonth: number; // 1..31
+  totalCents: number;
+}
+
+/**
+ * Spend per calendar day within `month` ("YYYY-MM"), zero-filled for every day
+ * of the month so the chart has a continuous axis. Income (negatives) and
+ * refunded/voided rows are excluded, matching the rest of the spend analytics.
+ */
+export function dailySpendForMonth(
+  expenses: AggExpense[],
+  month: string,
+): DaySpend[] {
+  const inMonth = onlyExpenses(expensesForMonth(expenses, month));
+  const [y, m] = month.split("-").map(Number);
+  // Day 0 of the *next* month is the last day of this one.
+  const daysInMonth = new Date(y, m, 0).getDate();
+
+  const totals = new Map<number, number>();
+  for (const e of inMonth) {
+    const d = e.date.getDate();
+    totals.set(d, (totals.get(d) ?? 0) + e.amountCents);
+  }
+
+  const out: DaySpend[] = [];
+  for (let d = 1; d <= daysInMonth; d++) {
+    out.push({
+      day: `${month}-${String(d).padStart(2, "0")}`,
+      dayOfMonth: d,
+      totalCents: totals.get(d) ?? 0,
+    });
+  }
+  return out;
+}
+
 /** Spend per month across whatever range the data covers, ascending by month. */
 export function spendByMonth(
   expenses: AggExpense[],

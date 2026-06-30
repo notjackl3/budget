@@ -295,6 +295,10 @@ model BudgetPlan {
   // null = follow the Investment allocator bucket; a value decouples the
   // projection from the slider so the user can model a different amount.
   investContribCents Int?
+  // The contribution plan as JSON: a starting-amount override plus a list of
+  // time-bounded "X every Y weeks/months from A to B" segments. Shape mirrors
+  // `InvestPlan` in lib/projection.ts. null = no plan saved yet (UI seeds one).
+  investPlanJson String?
 
   buckets     BudgetBucket[]
   allocations InvestmentAllocation[]

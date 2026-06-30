@@ -17,7 +17,9 @@ import {
   reconcileToIncome,
   INVESTMENT_KEY,
   type Bucket,
+  type InvestPlan,
 } from "@/lib/projection";
+import { monthKey } from "@/lib/dates";
 import {
   ProjectionView,
   type ProjectionCategory,
@@ -123,6 +125,19 @@ export default async function ProjectionPage() {
     months: s.months,
   }));
 
+  // Parse the saved contribution plan (start override + schedule). Bad/empty
+  // JSON falls back to null so the view seeds a sensible default segment.
+  let initialPlan: InvestPlan | null = null;
+  if (plan.investPlanJson) {
+    try {
+      const parsed = JSON.parse(plan.investPlanJson) as InvestPlan;
+      if (parsed && Array.isArray(parsed.segments)) initialPlan = parsed;
+    } catch {
+      initialPlan = null;
+    }
+  }
+  const currentMonth = monthKey(new Date());
+
   const hasIncome = monthlyIncomeCents > 0;
 
   return (
@@ -156,6 +171,8 @@ export default async function ProjectionPage() {
           horizonYears={plan.horizonYears}
           scenario={plan.scenario}
           investContribCents={plan.investContribCents}
+          initialPlan={initialPlan}
+          currentMonth={currentMonth}
           base={base}
         />
       )}

@@ -111,16 +111,23 @@ export function incomeTotals(jobs: IncomeJob[]): {
 }
 
 /**
- * Is the job earning during the given "YYYY-MM" month? A paused job never earns;
- * otherwise the month must fall inside the [startDate, endDate] window (compared
- * at month granularity). Missing bounds mean open-ended on that side.
+ * Is the job earning during the given "YYYY-MM" month? The month must fall inside
+ * the [startDate, endDate] window (compared at month granularity); missing bounds
+ * mean open-ended on that side.
+ *
+ * The `active` (Paused) toggle only suppresses the *open-ended ongoing tail*: a
+ * paused job with no end date earns nothing, since we don't know when it stopped.
+ * A paused job that has a defined end date still counts within its window — so a
+ * finished past job keeps contributing to the months it actually earned (e.g. the
+ * dashboard's income-over-the-year chart), not just while it was active.
  */
 export function jobActiveInMonth(job: IncomeJob, month: string): boolean {
-  if (job.active === false) return false;
   const start = job.startDate ? job.startDate.slice(0, 7) : null;
   const end = job.endDate ? job.endDate.slice(0, 7) : null;
   if (start && month < start) return false;
   if (end && month > end) return false;
+  // No end date means "ongoing" — pausing it stops the open-ended tail.
+  if (end === null && job.active === false) return false;
   return true;
 }
 

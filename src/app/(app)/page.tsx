@@ -7,6 +7,7 @@ import {
   salaryByMonthForYear,
   salaryForMonth,
   addMonthSeries,
+  dailySpendForMonth,
 } from "@/lib/aggregate";
 import { jobIncomeByMonthForYear, jobIncomeForMonth } from "@/lib/income";
 import { monthKey, monthLabel, dateToYMD } from "@/lib/dates";
@@ -16,6 +17,7 @@ import { MonthPicker } from "@/components/month-picker";
 import { NeedWantBar } from "@/components/need-want-bar";
 import { CategoryDonut } from "@/components/charts/category-donut";
 import { CashflowTrend } from "@/components/charts/cashflow-trend";
+import { DailySpend } from "@/components/charts/daily-spend";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -52,6 +54,7 @@ export default async function DashboardPage({
       value: c.totalCents,
       color: c.color ?? "#94a3b8",
     }));
+  const daily = dailySpendForMonth(agg, month);
 
   // Income = jobs configured on the Income tab (placed on the months each job's
   // window covers) PLUS one-off Salary transactions. Refunds/reimbursements are
@@ -139,38 +142,6 @@ export default async function DashboardPage({
         />
       </div>
 
-      {/* Income detail: which jobs are earning this month and how much. */}
-      <Card>
-        <CardHeader className="flex-row items-center justify-between space-y-0">
-          <CardTitle>Income · {monthLabel(month)}</CardTitle>
-          <span className="tabular text-lg font-semibold text-emerald-600">
-            + {money(incomeCents)}
-          </span>
-        </CardHeader>
-        <CardContent>
-          {monthJobs.length > 0 ? (
-            <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm text-muted-foreground">
-              {monthJobs.map((j) => (
-                <span key={j.name}>
-                  {j.name}{" "}
-                  <span className="tabular font-medium text-foreground">
-                    {money(j.cents)}
-                  </span>
-                </span>
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              No jobs were earning in {monthLabel(month)}.{" "}
-              <Link href="/income" className="underline hover:text-foreground">
-                Set up your income
-              </Link>{" "}
-              to see it here and in the chart.
-            </p>
-          )}
-        </CardContent>
-      </Card>
-
       {/* Need/Want split */}
       <Card>
         <CardHeader>
@@ -205,7 +176,7 @@ export default async function DashboardPage({
             <CardTitle>Category breakdown</CardTitle>
           </CardHeader>
           <CardContent>
-            <CategoryDonut data={donut} totalCents={summary.totalCents} />
+            <CategoryDonut data={donut} />
           </CardContent>
         </Card>
 
@@ -219,6 +190,16 @@ export default async function DashboardPage({
           </CardContent>
         </Card>
       </div>
+
+      {/* Daily spending across the selected month */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Daily spending · {monthLabel(month)}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <DailySpend data={daily} />
+        </CardContent>
+      </Card>
     </div>
   );
 }

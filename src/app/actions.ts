@@ -734,6 +734,9 @@ export async function saveBudgetPlan(input: {
   scenario?: string;
   // null clears the override (projection follows the Investment bucket again).
   investContribCents?: number | null;
+  // The contribution plan (start override + schedule segments) as a JSON string,
+  // or null to clear it. Validated by round-tripping through JSON.
+  investPlanJson?: string | null;
 }) {
   await assertAuthenticated();
   await ensurePlan();
@@ -746,6 +749,18 @@ export async function saveBudgetPlan(input: {
       input.investContribCents === null
         ? null
         : Math.max(0, Math.round(input.investContribCents));
+  if (input.investPlanJson !== undefined) {
+    if (input.investPlanJson === null) {
+      data.investPlanJson = null;
+    } else {
+      try {
+        // Re-serialize so we only ever store well-formed, compact JSON.
+        data.investPlanJson = JSON.stringify(JSON.parse(input.investPlanJson));
+      } catch {
+        throw new Error("Invalid investment plan");
+      }
+    }
+  }
   await prisma.budgetPlan.update({ where: { id: PLAN_ID }, data });
   bust(TAG.plan);
 }

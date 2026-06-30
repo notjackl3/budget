@@ -9,6 +9,8 @@ import {
   TrendingUp,
   Sparkles,
   ChevronDown,
+  Plus,
+  Trash2,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -29,9 +31,14 @@ import {
   blendReturn,
   projectScenarios,
   scenarioReturns,
+  scheduleMonthlyContribution,
+  contributionScheduleFn,
   INVESTMENT_KEY,
   type Bucket,
   type ScenarioKey,
+  type ContribSegment,
+  type ContribUnit,
+  type InvestPlan,
 } from "@/lib/projection";
 import type { ReturnStats } from "@/lib/investments";
 import { dollarsToCents, centsToDecimalString } from "@/lib/money";
@@ -87,6 +94,8 @@ export function ProjectionView({
   horizonYears,
   scenario,
   investContribCents,
+  initialPlan,
+  currentMonth,
   base,
 }: {
   monthlyIncomeCents: number;
@@ -99,6 +108,8 @@ export function ProjectionView({
   horizonYears: number;
   scenario: string;
   investContribCents: number | null;
+  initialPlan: InvestPlan | null;
+  currentMonth: string;
   base: string;
 }) {
   const router = useRouter();
@@ -133,21 +144,80 @@ export function ProjectionView({
   };
   // What the allocator budgets to investing each month (the slider value).
   const budgetedInvestCents = investBucket.amountCents;
-  // Manual override for the projection's monthly contribution. null = follow the
-  // slider; a value decouples the projection so the user can model any amount.
-  const [contribOverride, setContribOverride] = React.useState<number | null>(
-    investContribCents,
-  );
-  const monthlyContributionCents = contribOverride ?? budgetedInvestCents;
   const spendCents = monthlyIncomeCents - budgetedInvestCents;
 
-  async function commitContrib(cents: number | null) {
-    setContribOverride(cents);
+  // ----- Contribution plan: starting-amount override + schedule segments -----
+  // Seeded from the saved plan, else a single "budgeted invest, monthly, forever"
+  // segment so the projection matches the allocator out of the box.
+  const [startOverride, setStartOverride] = React.useState<number | null>(
+    initialPlan ? initialPlan.startCents : null,
+  );
+  const [segments, setSegments] = React.useState<ContribSegment[]>(() => {
+    if (initialPlan && initialPlan.segments.length > 0) return initialPlan.segments;
+    return [
+      {
+        amountCents: investContribCents ?? budgetedInvestCents,
+        unit: "month",
+        every: 1,
+        startMonth: null,
+        endMonth: null,
+      },
+    ];
+  });
+
+  // Effective starting balance: the override if set, else today's portfolio value.
+  const effectiveStartCents = startOverride ?? portfolioValueCents;
+  // This calendar month's contribution under the schedule — used for labels.
+  const currentContribCents = React.useMemo(
+    () => Math.round(scheduleMonthlyContribution(segments, currentMonth)),
+    [segments, currentMonth],
+  );
+  const contributionForMonth = React.useMemo(
+    () => contributionScheduleFn(segments, currentMonth),
+    [segments, currentMonth],
+  );
+
+  async function persistPlan(
+    nextStart: number | null = startOverride,
+    nextSegs: ContribSegment[] = segments,
+  ) {
     try {
-      await saveBudgetPlan({ investContribCents: cents });
+      await saveBudgetPlan({
+        investPlanJson: JSON.stringify({ startCents: nextStart, segments: nextSegs }),
+      });
     } catch {
-      toast({ title: "Could not save contribution", variant: "error" });
+      toast({ title: "Could not save contribution plan", variant: "error" });
     }
+  }
+
+  // These run from event handlers, so `segments` from closure is current. We
+  // compute the next array, set it, then persist — never persisting inside the
+  // state updater (that fires during render and triggers a router update).
+  function updateSegment(i: number, patch: Partial<ContribSegment>) {
+    const next = segments.map((s, idx) => (idx === i ? { ...s, ...patch } : s));
+    setSegments(next);
+    void persistPlan(undefined, next);
+  }
+  function addSegment() {
+    const last = segments[segments.length - 1];
+    const next: ContribSegment[] = [
+      ...segments,
+      {
+        amountCents: 0,
+        unit: "month",
+        every: 1,
+        // Chain a new period onto the end of the previous one when it's bounded.
+        startMonth: last?.endMonth ?? null,
+        endMonth: null,
+      },
+    ];
+    setSegments(next);
+    void persistPlan(undefined, next);
+  }
+  function removeSegment(i: number) {
+    const next = segments.filter((_, idx) => idx !== i);
+    setSegments(next);
+    void persistPlan(undefined, next);
   }
 
   const statsBySymbol = React.useMemo<Record<string, ReturnStats>>(
@@ -173,12 +243,13 @@ export function ProjectionView({
   const projection = React.useMemo(() => {
     if (!blended) return null;
     return projectScenarios({
-      startCents: portfolioValueCents,
-      monthlyContributionCents,
+      startCents: effectiveStartCents,
+      monthlyContributionCents: 0,
       stats: blended,
       years: horizon,
+      contributionForMonth,
     });
-  }, [blended, portfolioValueCents, monthlyContributionCents, horizon]);
+  }, [blended, effectiveStartCents, contributionForMonth, horizon]);
 
   const returns = blended ? scenarioReturns(blended) : null;
 
@@ -332,8 +403,8 @@ export function ProjectionView({
           <div>
             <CardTitle>Where the investment goes</CardTitle>
             <p className="mt-1 text-xs text-muted-foreground">
-              Split your {money(monthlyContributionCents)}/mo across holdings. Returns
-              come from each ticker&apos;s past ~5 years.
+              Split this month&apos;s {money(currentContribCents)} across holdings.
+              Returns come from each ticker&apos;s past ~5 years.
             </p>
           </div>
           <Button variant="outline" size="sm" onClick={refresh} disabled={refreshing}>
@@ -342,39 +413,6 @@ export function ProjectionView({
           </Button>
         </CardHeader>
         <CardContent className="space-y-3">
-          {/* Manual monthly contribution used for the projection. Defaults to
-              the budgeted Investment amount but can be set independently. */}
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/30 p-3">
-            <div className="min-w-0">
-              <Label className="text-sm">Monthly contribution</Label>
-              <p className="text-xs text-muted-foreground">
-                Amount invested each month in the projection
-                {contribOverride === null
-                  ? " · following your budget"
-                  : ` · budgeted ${money(budgetedInvestCents)}`}
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              {contribOverride !== null && (
-                <button
-                  type="button"
-                  className="text-xs text-primary hover:underline"
-                  onClick={() => commitContrib(null)}
-                >
-                  Match budget
-                </button>
-              )}
-              <div className="relative w-28">
-                <ContribInput
-                  valueCents={monthlyContributionCents}
-                  onCommit={(c) => commitContrib(c)}
-                />
-                <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
-                  $
-                </span>
-              </div>
-            </div>
-          </div>
           {holdings.length === 0 ? (
             <p className="py-4 text-center text-sm text-muted-foreground">
               No holdings yet. Add some on the{" "}
@@ -447,6 +485,85 @@ export function ProjectionView({
         </CardContent>
       </Card>
 
+      {/* Investment plan: starting amount + contribution schedule */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Your investment plan</CardTitle>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Set what you start with and how much you add over time. Add a period to
+            invest a set amount every few weeks or months — bounded to a date range
+            or running indefinitely.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Starting amount */}
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <Label className="text-xs text-muted-foreground">Starting amount</Label>
+              <div className="relative mt-1 w-40">
+                <MoneyInput
+                  valueCents={effectiveStartCents}
+                  onCommit={(c) => {
+                    setStartOverride(c);
+                    void persistPlan(c, segments);
+                  }}
+                  className="h-9 pl-6 tabular"
+                />
+                <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+                  $
+                </span>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {startOverride === null ? (
+                <>Using your current portfolio value, {money(portfolioValueCents)}.</>
+              ) : (
+                <button
+                  type="button"
+                  className="text-primary hover:underline"
+                  onClick={() => {
+                    setStartOverride(null);
+                    void persistPlan(null, segments);
+                  }}
+                >
+                  Use my portfolio ({money(portfolioValueCents)})
+                </button>
+              )}
+            </p>
+          </div>
+
+          {/* Schedule segments */}
+          <div className="space-y-2">
+            <Label className="text-xs text-muted-foreground">Contributions</Label>
+            {segments.length === 0 && (
+              <p className="rounded-lg border border-dashed p-3 text-center text-xs text-muted-foreground">
+                No contributions — the projection grows the starting amount only.
+              </p>
+            )}
+            {segments.map((seg, i) => (
+              <SegmentRow
+                key={i}
+                seg={seg}
+                currentMonth={currentMonth}
+                onChange={(patch) => updateSegment(i, patch)}
+                onRemove={() => removeSegment(i)}
+              />
+            ))}
+            <Button variant="outline" size="sm" onClick={addSegment}>
+              <Plus className="h-4 w-4" /> Add a period
+            </Button>
+          </div>
+
+          <p className="border-t pt-3 text-xs text-muted-foreground">
+            This month that works out to{" "}
+            <span className="tabular font-medium text-foreground">
+              {money(currentContribCents)}
+            </span>{" "}
+            invested.
+          </p>
+        </CardContent>
+      </Card>
+
       {/* Projection */}
       <Card>
         <CardHeader className="flex-row items-start justify-between gap-3 space-y-0">
@@ -455,7 +572,7 @@ export function ProjectionView({
               <TrendingUp className="h-4 w-4 text-primary" /> Projection
             </CardTitle>
             <p className="mt-1 text-xs text-muted-foreground">
-              {money(monthlyContributionCents)}/mo on top of {money(portfolioValueCents)} today.
+              {money(effectiveStartCents)} to start, following your contribution plan.
             </p>
           </div>
           <Select value={String(horizon)} onValueChange={(v) => changeHorizon(Number(v))}>
@@ -527,7 +644,8 @@ export function ProjectionView({
                 <span className="font-medium text-foreground">
                   {horizonEnd ? money(horizonEnd.averageCents) : "—"}
                 </span>{" "}
-                on average. All values in {base}; the band spans worst→best (±1 std dev
+                on average from {horizonEnd ? money(horizonEnd.contributedCents) : "—"}{" "}
+                invested. All values in {base}; the band spans worst→best (±1 std dev
                 of historical returns).
               </p>
             </>
@@ -538,14 +656,180 @@ export function ProjectionView({
   );
 }
 
-/** Dollar input for the projection's monthly contribution. Local text state so
- *  typing isn't clobbered, committing the parsed cents on blur / Enter. */
-function ContribInput({
+const UNITS: { value: ContribUnit; label: string }[] = [
+  { value: "week", label: "weeks" },
+  { value: "month", label: "months" },
+];
+
+const MONTH_OPTS = [
+  { v: "01", l: "Jan" },
+  { v: "02", l: "Feb" },
+  { v: "03", l: "Mar" },
+  { v: "04", l: "Apr" },
+  { v: "05", l: "May" },
+  { v: "06", l: "Jun" },
+  { v: "07", l: "Jul" },
+  { v: "08", l: "Aug" },
+  { v: "09", l: "Sep" },
+  { v: "10", l: "Oct" },
+  { v: "11", l: "Nov" },
+  { v: "12", l: "Dec" },
+];
+
+/**
+ * Month + year dropdowns for one bound of a contribution segment. A `null` value
+ * is the open-ended state — "Now" for the start, "Forever" for the end — chosen
+ * via the first option in the month list. Picking a real month enables the year
+ * (defaulting to the current year); the year list runs from now out 30 years.
+ */
+function MonthYearPicker({
+  value,
+  onChange,
+  kind,
+  currentMonth,
+}: {
+  value: string | null; // "YYYY-MM" or null
+  onChange: (v: string | null) => void;
+  kind: "from" | "to";
+  currentMonth: string; // "YYYY-MM"
+}) {
+  const sentinel = kind === "from" ? "now" : "forever";
+  const sentinelLabel = kind === "from" ? "Now" : "Forever";
+  const curYear = Number(currentMonth.slice(0, 4));
+  const years = Array.from({ length: 31 }, (_, i) => curYear + i);
+
+  const month = value ? value.slice(5, 7) : sentinel;
+  const year = value ? value.slice(0, 4) : "";
+
+  function pickMonth(m: string) {
+    if (m === sentinel) onChange(null);
+    else onChange(`${year || curYear}-${m}`);
+  }
+  function pickYear(y: string) {
+    onChange(`${y}-${value ? value.slice(5, 7) : "01"}`);
+  }
+
+  return (
+    <div className="flex items-center gap-1">
+      <Select value={month} onValueChange={pickMonth}>
+        <SelectTrigger className="h-8 w-[5.25rem]">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={sentinel}>{sentinelLabel}</SelectItem>
+          {MONTH_OPTS.map((o) => (
+            <SelectItem key={o.v} value={o.v}>
+              {o.l}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <Select value={year || undefined} onValueChange={pickYear} disabled={!value}>
+        <SelectTrigger className="h-8 w-[4.75rem]">
+          <SelectValue placeholder="—" />
+        </SelectTrigger>
+        <SelectContent>
+          {years.map((y) => (
+            <SelectItem key={y} value={String(y)}>
+              {y}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
+/** One row of the contribution schedule: $X every Y weeks/months, over a date
+ *  range (null "from" = now, null "to" = forever). */
+function SegmentRow({
+  seg,
+  currentMonth,
+  onChange,
+  onRemove,
+}: {
+  seg: ContribSegment;
+  currentMonth: string;
+  onChange: (patch: Partial<ContribSegment>) => void;
+  onRemove: () => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/20 p-2.5 text-sm">
+      <div className="relative w-28">
+        <MoneyInput
+          valueCents={seg.amountCents}
+          onCommit={(c) => onChange({ amountCents: c })}
+          className="h-8 pl-5 tabular"
+        />
+        <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+          $
+        </span>
+      </div>
+      <span className="text-muted-foreground">every</span>
+      <Input
+        inputMode="numeric"
+        value={String(seg.every)}
+        onChange={(e) => {
+          const v = parseInt(e.target.value, 10);
+          onChange({ every: Number.isFinite(v) && v > 0 ? v : 1 });
+        }}
+        className="h-8 w-14 text-right tabular"
+        aria-label="Every N periods"
+      />
+      <Select
+        value={seg.unit}
+        onValueChange={(v) => onChange({ unit: v as ContribUnit })}
+      >
+        <SelectTrigger className="h-8 w-24">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {UNITS.map((u) => (
+            <SelectItem key={u.value} value={u.value}>
+              {u.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <div className="flex items-center gap-1.5">
+        <span className="text-muted-foreground">from</span>
+        <MonthYearPicker
+          kind="from"
+          currentMonth={currentMonth}
+          value={seg.startMonth}
+          onChange={(v) => onChange({ startMonth: v })}
+        />
+      </div>
+      <div className="flex items-center gap-1.5">
+        <span className="text-muted-foreground">to</span>
+        <MonthYearPicker
+          kind="to"
+          currentMonth={currentMonth}
+          value={seg.endMonth}
+          onChange={(v) => onChange({ endMonth: v })}
+        />
+      </div>
+      <button
+        type="button"
+        onClick={onRemove}
+        className="ml-auto shrink-0 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+        aria-label="Remove this contribution period"
+      >
+        <Trash2 className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
+
+/** Dollar input with local text state, committing parsed cents on blur / Enter. */
+function MoneyInput({
   valueCents,
   onCommit,
+  className,
 }: {
   valueCents: number;
   onCommit: (cents: number) => void;
+  className?: string;
 }) {
   const [text, setText] = React.useState(centsToDecimalString(valueCents));
   React.useEffect(() => {
@@ -566,8 +850,7 @@ function ContribInput({
       onKeyDown={(e) => {
         if (e.key === "Enter") e.currentTarget.blur();
       }}
-      className="h-8 pl-5 text-right tabular"
-      aria-label="Monthly contribution for the projection"
+      className={className}
     />
   );
 }

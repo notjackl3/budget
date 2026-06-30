@@ -76,8 +76,18 @@ describe("jobActiveInMonth — start/end window", () => {
     expect(jobActiveInMonth({ payCents: 1, cadence: "monthly" }, "2020-01")).toBe(true);
     expect(jobActiveInMonth({ payCents: 1, cadence: "monthly", startDate: "2026-05-01" }, "2030-12")).toBe(true);
   });
-  it("a paused job is never active", () => {
-    expect(jobActiveInMonth({ ...job, active: false }, "2026-06")).toBe(false);
+  it("a paused job still counts within a defined window (finished past job)", () => {
+    // Pausing a bounded job doesn't erase the months it actually earned.
+    expect(jobActiveInMonth({ ...job, active: false }, "2026-06")).toBe(true);
+    expect(jobActiveInMonth({ ...job, active: false }, "2026-09")).toBe(false); // still after end
+  });
+  it("a paused open-ended job (no end date) earns nothing", () => {
+    expect(
+      jobActiveInMonth(
+        { payCents: 1, cadence: "monthly", startDate: "2026-01-01", active: false },
+        "2026-06",
+      ),
+    ).toBe(false);
   });
 });
 

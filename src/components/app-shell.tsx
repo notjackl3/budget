@@ -13,7 +13,6 @@ import {
   Briefcase,
   TrendingUp,
   LineChart,
-  Library,
   Plus,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -29,7 +28,6 @@ const NAV = [
   { href: "/income", label: "Income", icon: Briefcase },
   { href: "/investments", label: "Investments", icon: TrendingUp },
   { href: "/projection", label: "Projection", icon: LineChart },
-  { href: "/library", label: "Portfolio Library", icon: Library },
   { href: "/review", label: "Weekly Review", icon: CheckCircle2 },
   { href: "/import", label: "Import", icon: Upload },
   { href: "/settings", label: "Settings", icon: SettingsIcon },
